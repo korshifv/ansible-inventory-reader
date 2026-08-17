@@ -17,7 +17,9 @@ qt_standard_project_setup(REQUIRES 6.5)
 
 qt_add_executable(ansible-inventory-studio
     src/main.cpp
-    src/inventorydocument.cpp
+    src/inventorydocument_io.cpp
+    src/inventorydocument_edit.cpp
+    src/inventorydocument_graph.cpp
     src/inventorydocument.h
     src/inventorytreemodel.cpp
     src/inventorytreemodel.h
