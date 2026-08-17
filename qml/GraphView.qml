@@ -16,6 +16,7 @@ Item {
 
     property real zoom: 1.0
     property var relatedIds: buildRelationSet(selectedType, selectedName, edges)
+    property var displayPositions: buildDisplayPositions(nodes, relatedIds, selectedName)
 
     function nodeId(type, name) {
         return type + ":" + name
@@ -80,6 +81,71 @@ Item {
         return result
     }
 
+    function buildDisplayPositions(graphNodes, relationSet, selectionName) {
+        const positions = ({})
+
+        // With no selection, preserve the canonical layout produced by C++.
+        if (selectionName.length === 0) {
+            for (let i = 0; i < graphNodes.length; ++i) {
+                const node = graphNodes[i]
+                positions[node.id] = {
+                    x: node.x,
+                    y: node.y,
+                    width: node.width,
+                    height: node.height
+                }
+            }
+            return positions
+        }
+
+        // Nodes are laid out in vertical columns (same x = same depth). Keep those
+        // columns intact, but stable-partition every column so highlighted nodes
+        // occupy its top slots. Nothing in the actual inventory model is reordered.
+        const columns = ({})
+        for (let i = 0; i < graphNodes.length; ++i) {
+            const node = graphNodes[i]
+            const key = String(node.x)
+            if (!columns[key])
+                columns[key] = []
+            columns[key].push(node)
+        }
+
+        for (const key in columns) {
+            const column = columns[key]
+            column.sort(function(a, b) { return a.y - b.y })
+
+            const slots = []
+            const highlighted = []
+            const rest = []
+
+            for (let i = 0; i < column.length; ++i) {
+                const node = column[i]
+                slots.push(node.y)
+                if (relationSet[node.id] === true)
+                    highlighted.push(node)
+                else
+                    rest.push(node)
+            }
+
+            const ordered = highlighted.concat(rest)
+            for (let i = 0; i < ordered.length; ++i) {
+                const node = ordered[i]
+                positions[node.id] = {
+                    x: node.x,
+                    y: slots[i],
+                    width: node.width,
+                    height: node.height
+                }
+            }
+        }
+
+        return positions
+    }
+
+    function positionFor(node) {
+        return displayPositions[node.id] || node
+    }
+
     function isRelated(type, name) {
         if (selectedName.length === 0)
             return false
@@ -142,16 +208,26 @@ Item {
                         const edge = root.edges[i]
                         const related = root.edgeIsRelated(edge)
                         const hasSelection = root.selectedName.length > 0
-                        const dx = Math.max(40, (edge.x2 - edge.x1) * 0.45)
+                        const from = root.displayPositions[edge.from]
+                        const to = root.displayPositions[edge.to]
+
+                        if (!from || !to)
+                            continue
+
+                        const x1 = edge.x1
+                        const y1 = from.y + from.height / 2
+                        const x2 = edge.x2
+                        const y2 = to.y + to.height / 2
+                        const dx = Math.max(40, (x2 - x1) * 0.45)
 
                         ctx.lineWidth = (related ? 3.0 : 1.5) / root.zoom
                         ctx.strokeStyle = related ? palette.highlight : palette.mid
                         ctx.globalAlpha = related ? 1.0 : (hasSelection ? 0.13 : 0.75)
                         ctx.beginPath()
-                        ctx.moveTo(edge.x1, edge.y1)
-                        ctx.bezierCurveTo(edge.x1 + dx, edge.y1,
-                                          edge.x2 - dx, edge.y2,
-                                          edge.x2, edge.y2)
+                        ctx.moveTo(x1, y1)
+                        ctx.bezierCurveTo(x1 + dx, y1,
+                                          x2 - dx, y2,
+                                          x2, y2)
                         ctx.stroke()
                     }
                     ctx.globalAlpha = 1.0
@@ -162,6 +238,7 @@ Item {
                     function onEdgesChanged() { edgeCanvas.requestPaint() }
                     function onZoomChanged() { edgeCanvas.requestPaint() }
                     function onRelatedIdsChanged() { edgeCanvas.requestPaint() }
+                    function onDisplayPositionsChanged() { edgeCanvas.requestPaint() }
                     function onSelectedNameChanged() { edgeCanvas.requestPaint() }
                 }
             }
@@ -177,9 +254,10 @@ Item {
                                             && root.selectedName === modelData.name
                     property bool related: root.isRelated(modelData.type, modelData.name)
                     property bool hasSelection: root.selectedName.length > 0
+                    property var displayPosition: root.positionFor(modelData)
 
-                    x: modelData.x
-                    y: modelData.y
+                    x: displayPosition.x
+                    y: displayPosition.y
                     width: modelData.width
                     height: modelData.height
                     radius: 9
