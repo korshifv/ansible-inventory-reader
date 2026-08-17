@@ -15,6 +15,82 @@ Item {
     signal nodeSelected(string type, string name)
 
     property real zoom: 1.0
+    property var relatedIds: buildRelationSet(selectedType, selectedName, edges)
+
+    function nodeId(type, name) {
+        return type + ":" + name
+    }
+
+    function buildRelationSet(type, name, graphEdges) {
+        const result = ({})
+        if (type.length === 0 || name.length === 0)
+            return result
+
+        const selected = nodeId(type, name)
+        result[selected] = true
+
+        const parents = ({})
+        const children = ({})
+
+        for (let i = 0; i < graphEdges.length; ++i) {
+            const edge = graphEdges[i]
+
+            if (!parents[edge.to])
+                parents[edge.to] = []
+            parents[edge.to].push(edge.from)
+
+            if (!children[edge.from])
+                children[edge.from] = []
+            children[edge.from].push(edge.to)
+        }
+
+        // Selecting any child keeps its full ancestry visible, all the way to `all`.
+        let queue = [selected]
+        let cursor = 0
+        while (cursor < queue.length) {
+            const current = queue[cursor++]
+            const currentParents = parents[current] || []
+            for (let i = 0; i < currentParents.length; ++i) {
+                const parent = currentParents[i]
+                if (!result[parent]) {
+                    result[parent] = true
+                    queue.push(parent)
+                }
+            }
+        }
+
+        // A group behaves like a folder: selecting it lights up everything below it,
+        // including nested groups and hosts in those groups.
+        if (type === "group") {
+            queue = [selected]
+            cursor = 0
+            while (cursor < queue.length) {
+                const current = queue[cursor++]
+                const currentChildren = children[current] || []
+                for (let i = 0; i < currentChildren.length; ++i) {
+                    const child = currentChildren[i]
+                    if (!result[child]) {
+                        result[child] = true
+                        queue.push(child)
+                    }
+                }
+            }
+        }
+
+        return result
+    }
+
+    function isRelated(type, name) {
+        if (selectedName.length === 0)
+            return false
+        return relatedIds[nodeId(type, name)] === true
+    }
+
+    function edgeIsRelated(edge) {
+        if (selectedName.length === 0)
+            return false
+        return relatedIds[edge.from] === true && relatedIds[edge.to] === true
+    }
 
     function matches(node) {
         if (searchText.trim().length === 0)
@@ -61,12 +137,16 @@ Item {
                 onPaint: {
                     const ctx = getContext("2d")
                     ctx.clearRect(0, 0, width, height)
-                    ctx.lineWidth = 1.5 / root.zoom
-                    ctx.strokeStyle = palette.mid
 
                     for (let i = 0; i < root.edges.length; ++i) {
                         const edge = root.edges[i]
+                        const related = root.edgeIsRelated(edge)
+                        const hasSelection = root.selectedName.length > 0
                         const dx = Math.max(40, (edge.x2 - edge.x1) * 0.45)
+
+                        ctx.lineWidth = (related ? 3.0 : 1.5) / root.zoom
+                        ctx.strokeStyle = related ? palette.highlight : palette.mid
+                        ctx.globalAlpha = related ? 1.0 : (hasSelection ? 0.13 : 0.75)
                         ctx.beginPath()
                         ctx.moveTo(edge.x1, edge.y1)
                         ctx.bezierCurveTo(edge.x1 + dx, edge.y1,
@@ -74,12 +154,15 @@ Item {
                                           edge.x2, edge.y2)
                         ctx.stroke()
                     }
+                    ctx.globalAlpha = 1.0
                 }
 
                 Connections {
                     target: root
                     function onEdgesChanged() { edgeCanvas.requestPaint() }
                     function onZoomChanged() { edgeCanvas.requestPaint() }
+                    function onRelatedIdsChanged() { edgeCanvas.requestPaint() }
+                    function onSelectedNameChanged() { edgeCanvas.requestPaint() }
                 }
             }
 
@@ -87,20 +170,33 @@ Item {
                 model: root.nodes
 
                 delegate: Rectangle {
+                    id: nodeCard
                     required property var modelData
+
+                    property bool selected: root.selectedType === modelData.type
+                                            && root.selectedName === modelData.name
+                    property bool related: root.isRelated(modelData.type, modelData.name)
+                    property bool hasSelection: root.selectedName.length > 0
 
                     x: modelData.x
                     y: modelData.y
                     width: modelData.width
                     height: modelData.height
                     radius: 9
-                    opacity: root.matches(modelData) ? 1.0 : 0.22
+                    opacity: !root.matches(modelData)
+                             ? 0.10
+                             : (hasSelection && !related ? 0.18 : 1.0)
                     color: modelData.type === "group" ? palette.alternateBase : palette.button
-                    border.width: root.selectedType === modelData.type
-                                  && root.selectedName === modelData.name ? 2.5 : 1
-                    border.color: root.selectedType === modelData.type
-                                  && root.selectedName === modelData.name
-                                  ? palette.highlight : palette.mid
+                    border.width: selected ? 3.0 : (related ? 2.0 : 1.0)
+                    border.color: selected || related ? palette.highlight : palette.mid
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: 2
+                        radius: Math.max(0, parent.radius - 2)
+                        color: palette.highlight
+                        opacity: nodeCard.selected ? 0.22 : (nodeCard.related ? 0.09 : 0.0)
+                    }
 
                     Column {
                         anchors.fill: parent
@@ -111,7 +207,7 @@ Item {
                             width: parent.width
                             text: (modelData.type === "group" ? "▣  " : "●  ") + modelData.name
                             color: palette.text
-                            font.weight: Font.DemiBold
+                            font.weight: nodeCard.selected ? Font.Bold : Font.DemiBold
                             elide: Text.ElideRight
                         }
 
