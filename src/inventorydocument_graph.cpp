@@ -64,7 +64,8 @@ void InventoryDocument::rebuildGraph()
 
     QHash<QString, int> hostDepth;
     for (const QString &hostName : sortedHostNames()) {
-        const HostRecord &host = m_hosts.constFind(hostName).value();
+        const auto hostIt = m_hosts.constFind(hostName);
+        const HostRecord &host = hostIt.value();
         int depth = 1;
         for (const QString &group : host.groups)
             depth = std::max(depth, groupDepth.value(group, 1) + 1);
@@ -147,7 +148,8 @@ void InventoryDocument::rebuildGraph()
     };
 
     for (const QString &groupName : sortedGroupNames(false)) {
-        const GroupRecord &group = m_groups.constFind(groupName).value();
+        const auto groupIt = m_groups.constFind(groupName);
+        const GroupRecord &group = groupIt.value();
         if (group.parents.isEmpty())
             addEdge(QStringLiteral("group:all"), QStringLiteral("group:") + groupName, QStringLiteral("group"));
         for (const QString &parent : group.parents)
@@ -155,7 +157,8 @@ void InventoryDocument::rebuildGraph()
     }
 
     for (const QString &hostName : sortedHostNames()) {
-        const HostRecord &host = m_hosts.constFind(hostName).value();
+        const auto hostIt = m_hosts.constFind(hostName);
+        const HostRecord &host = hostIt.value();
         if (host.groups.isEmpty()) {
             addEdge(QStringLiteral("group:all"), QStringLiteral("host:") + hostName, QStringLiteral("host"));
         } else {
