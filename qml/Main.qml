@@ -205,7 +205,6 @@ ApplicationWindow {
                 id: searchField
                 Layout.preferredWidth: 300
                 placeholderText: "Search host, group or ansible_host…"
-                clearButtonEnabled: true
             }
         }
     }
