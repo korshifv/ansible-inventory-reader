@@ -1,4 +1,5 @@
 #include "inventorydocument.h"
+#include "inventorytreemodel.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
