@@ -19,7 +19,7 @@ int main(int argc, char *argv[])
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, [] { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
 
-    engine.loadFromModule(QStringLiteral("AnsibleInventoryStudio"), QStringLiteral("Main"));
+    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/AnsibleInventoryStudio/Main.qml")));
 
     if (argc > 1)
         inventory.openFile(QUrl::fromLocalFile(QString::fromLocal8Bit(argv[1])));
