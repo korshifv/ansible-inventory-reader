@@ -10,10 +10,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Quick QuickControls2)
 find_package(yaml-cpp CONFIG REQUIRED)
 
-qt_standard_project_setup(REQUIRES 6.5)
+qt_standard_project_setup()
 
 qt_add_executable(ansible-inventory-studio
     src/main.cpp
@@ -28,6 +28,7 @@ qt_add_executable(ansible-inventory-studio
 qt_add_qml_module(ansible-inventory-studio
     URI AnsibleInventoryStudio
     VERSION 1.0
+    RESOURCE_PREFIX /qt/qml
     QML_FILES
         qml/Main.qml
         qml/GraphView.qml
