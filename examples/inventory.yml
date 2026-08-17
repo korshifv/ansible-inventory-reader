@@ -1,0 +1,34 @@
+all:
+  vars:
+    ansible_user: root
+  children:
+    production:
+    staging:
+    monitoring:
+
+production:
+  children:
+    web:
+    db:
+
+staging:
+  hosts:
+    stage-01:
+      ansible_host: 10.20.0.10
+
+web:
+  hosts:
+    web-01:
+      ansible_host: 10.10.0.11
+    web-02:
+      ansible_host: 10.10.0.12
+
+db:
+  hosts:
+    db-01:
+      ansible_host: 10.10.1.21
+
+monitoring:
+  hosts:
+    web-01:
+    db-01:
