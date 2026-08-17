@@ -283,14 +283,16 @@ YAML::Node InventoryDocument::serializeYaml() const
     YAML::Node root(YAML::NodeType::Map);
     YAML::Node allNode(YAML::NodeType::Map);
 
-    const GroupRecord &all = m_groups.constFind(QStringLiteral("all")).value();
+    const auto allIt = m_groups.constFind(QStringLiteral("all"));
+    const GroupRecord &all = allIt.value();
     if (all.vars && all.vars.IsMap() && all.vars.size() > 0)
         allNode["vars"] = YAML::Clone(all.vars);
 
     YAML::Node allHosts(YAML::NodeType::Map);
     bool haveAllHosts = false;
     for (const QString &hostName : sortedHostNames()) {
-        const HostRecord &host = m_hosts.constFind(hostName).value();
+        const auto hostIt = m_hosts.constFind(hostName);
+        const HostRecord &host = hostIt.value();
         if (host.groups.isEmpty() || host.explicitAll) {
             allHosts[hostName.toStdString()] = hostVarsForLocation(host, QStringLiteral("all"));
             haveAllHosts = true;
@@ -313,7 +315,8 @@ YAML::Node InventoryDocument::serializeYaml() const
     root["all"] = allNode;
 
     for (const QString &groupName : sortedGroupNames(false)) {
-        const GroupRecord &group = m_groups.constFind(groupName).value();
+        const auto groupIt = m_groups.constFind(groupName);
+        const GroupRecord &group = groupIt.value();
         YAML::Node groupNode(YAML::NodeType::Map);
 
         if (group.vars && group.vars.IsMap() && group.vars.size() > 0)
