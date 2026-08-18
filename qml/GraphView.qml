@@ -15,9 +15,12 @@ Item {
     signal nodeSelected(string type, string name)
 
     property real zoom: 1.0
+    property int moveDuration: 220
+    property int fadeDuration: 140
+    property int edgeFrameInterval: edges.length > 300 ? 24 : 16
     property var relatedIds: buildRelationSet(selectedType, selectedName, edges)
     property var displayPositions: buildDisplayPositions(nodes, relatedIds, selectedName)
-    property var animatedPositions: ({})
+    property var nodeItems: ({})
 
     function nodeId(type, name) {
         return type + ":" + name
@@ -147,18 +150,23 @@ Item {
         return displayPositions[node.id] || node
     }
 
-    function updateAnimatedPosition(id, x, y, width, height) {
-        animatedPositions[id] = {
-            x: x,
-            y: y,
-            width: width,
-            height: height
-        }
-        edgeCanvas.requestPaint()
+    function registerNode(id, item) {
+        nodeItems[id] = item
     }
 
-    function animatedPositionFor(id) {
-        return animatedPositions[id] || displayPositions[id]
+    function unregisterNode(id, item) {
+        if (nodeItems[id] === item)
+            delete nodeItems[id]
+    }
+
+    function scheduleEdgeFrames() {
+        // One repaint per display frame, regardless of how many cards are moving.
+        // The old implementation repainted the whole edge canvas from every node's
+        // onYChanged callback, which exploded with large inventories.
+        edgeFrameTimer.running = false
+        edgeFrameTimer.elapsed = 0
+        edgeCanvas.requestPaint()
+        edgeFrameTimer.running = true
     }
 
     function isRelated(type, name) {
@@ -191,6 +199,25 @@ Item {
         flick.contentY = 0
     }
 
+    onDisplayPositionsChanged: scheduleEdgeFrames()
+
+    Timer {
+        id: edgeFrameTimer
+        interval: root.edgeFrameInterval
+        repeat: true
+        running: false
+        property int elapsed: 0
+
+        onTriggered: {
+            edgeCanvas.requestPaint()
+            elapsed += interval
+            if (elapsed >= root.moveDuration + 48) {
+                running = false
+                edgeCanvas.requestPaint()
+            }
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: palette.base
@@ -219,30 +246,39 @@ Item {
                     const ctx = getContext("2d")
                     ctx.clearRect(0, 0, width, height)
 
+                    const hasSelection = root.selectedName.length > 0
+                    const highlightColor = palette.highlight
+                    const normalColor = palette.mid
+
                     for (let i = 0; i < root.edges.length; ++i) {
                         const edge = root.edges[i]
                         const related = root.edgeIsRelated(edge)
-                        const hasSelection = root.selectedName.length > 0
-                        const from = root.animatedPositionFor(edge.from)
-                        const to = root.animatedPositionFor(edge.to)
+                        const fromItem = root.nodeItems[edge.from]
+                        const toItem = root.nodeItems[edge.to]
+                        const fromFallback = root.displayPositions[edge.from]
+                        const toFallback = root.displayPositions[edge.to]
 
-                        if (!from || !to)
+                        if ((!fromItem && !fromFallback) || (!toItem && !toFallback))
                             continue
 
+                        const fromY = fromItem
+                                      ? fromItem.y + fromItem.height / 2
+                                      : fromFallback.y + fromFallback.height / 2
+                        const toY = toItem
+                                    ? toItem.y + toItem.height / 2
+                                    : toFallback.y + toFallback.height / 2
                         const x1 = edge.x1
-                        const y1 = from.y + from.height / 2
                         const x2 = edge.x2
-                        const y2 = to.y + to.height / 2
                         const dx = Math.max(40, (x2 - x1) * 0.45)
 
                         ctx.lineWidth = (related ? 3.0 : 1.5) / root.zoom
-                        ctx.strokeStyle = related ? palette.highlight : palette.mid
+                        ctx.strokeStyle = related ? highlightColor : normalColor
                         ctx.globalAlpha = related ? 1.0 : (hasSelection ? 0.13 : 0.75)
                         ctx.beginPath()
-                        ctx.moveTo(x1, y1)
-                        ctx.bezierCurveTo(x1 + dx, y1,
-                                          x2 - dx, y2,
-                                          x2, y2)
+                        ctx.moveTo(x1, fromY)
+                        ctx.bezierCurveTo(x1 + dx, fromY,
+                                          x2 - dx, toY,
+                                          x2, toY)
                         ctx.stroke()
                     }
                     ctx.globalAlpha = 1.0
@@ -250,15 +286,15 @@ Item {
 
                 Connections {
                     target: root
-                    function onEdgesChanged() { edgeCanvas.requestPaint() }
+                    function onEdgesChanged() { root.scheduleEdgeFrames() }
                     function onZoomChanged() { edgeCanvas.requestPaint() }
                     function onRelatedIdsChanged() { edgeCanvas.requestPaint() }
-                    function onDisplayPositionsChanged() { edgeCanvas.requestPaint() }
                     function onSelectedNameChanged() { edgeCanvas.requestPaint() }
                 }
             }
 
             Repeater {
+                id: nodeRepeater
                 model: root.nodes
 
                 delegate: Rectangle {
@@ -270,8 +306,7 @@ Item {
                     property bool related: root.isRelated(modelData.type, modelData.name)
                     property bool hasSelection: root.selectedName.length > 0
                     property var displayPosition: root.positionFor(modelData)
-                    property real outlineWidth: selected ? 3.0 : (related ? 2.0 : 1.0)
-                    property real focusScale: selected ? 1.025 : (related ? 1.008 : 1.0)
+                    property real focusScale: selected ? 1.02 : 1.0
 
                     x: displayPosition.x
                     y: displayPosition.y
@@ -285,38 +320,45 @@ Item {
                              ? 0.10
                              : (hasSelection && !related ? 0.18 : 1.0)
                     color: modelData.type === "group" ? palette.alternateBase : palette.button
-                    border.width: outlineWidth
+                    border.width: selected ? 3.0 : (related ? 2.0 : 1.0)
                     border.color: selected || related ? palette.highlight : palette.mid
 
-                    Behavior on x {
-                        NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
-                    }
+                    // Focus mode only changes vertical order. Keeping x static avoids
+                    // waking an animation that can never actually do useful work.
                     Behavior on y {
-                        NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
+                        NumberAnimation {
+                            duration: root.moveDuration
+                            easing.type: Easing.OutCubic
+                        }
                     }
                     Behavior on opacity {
-                        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
-                    }
-                    Behavior on outlineWidth {
-                        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                        NumberAnimation {
+                            duration: root.fadeDuration
+                            easing.type: Easing.OutCubic
+                        }
                     }
                     Behavior on focusScale {
-                        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                        NumberAnimation {
+                            duration: 120
+                            easing.type: Easing.OutCubic
+                        }
                     }
 
-                    onXChanged: root.updateAnimatedPosition(modelData.id, x, y, width, height)
-                    onYChanged: root.updateAnimatedPosition(modelData.id, x, y, width, height)
-                    Component.onCompleted: root.updateAnimatedPosition(modelData.id, x, y, width, height)
+                    Component.onCompleted: root.registerNode(modelData.id, nodeCard)
+                    Component.onDestruction: root.unregisterNode(modelData.id, nodeCard)
 
                     Rectangle {
                         anchors.fill: parent
                         anchors.margins: 2
                         radius: Math.max(0, parent.radius - 2)
                         color: palette.highlight
-                        opacity: nodeCard.selected ? 0.22 : (nodeCard.related ? 0.09 : 0.0)
+                        opacity: nodeCard.selected ? 0.20 : (nodeCard.related ? 0.07 : 0.0)
 
                         Behavior on opacity {
-                            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                            NumberAnimation {
+                                duration: root.fadeDuration
+                                easing.type: Easing.OutCubic
+                            }
                         }
                     }
 
