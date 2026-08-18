@@ -501,17 +501,24 @@ ApplicationWindow {
                                 }
 
                                 ScrollView {
+                                    id: rawPingScroll
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 145
+                                    Layout.preferredHeight: 160
                                     visible: rawPingExpanded && (selectedPingInfo.raw || "").length > 0
                                     clip: true
+                                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                                     TextArea {
+                                        width: rawPingScroll.availableWidth
                                         text: selectedPingInfo.raw || ""
                                         readOnly: true
                                         selectByMouse: true
-                                        wrapMode: TextEdit.NoWrap
+                                        wrapMode: TextEdit.WrapAnywhere
                                         font.family: "monospace"
+                                        leftPadding: 10
+                                        rightPadding: 10
+                                        topPadding: 9
+                                        bottomPadding: 9
                                         background: Rectangle {
                                             color: palette.base
                                             border.color: palette.mid
