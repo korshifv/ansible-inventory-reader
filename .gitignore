@@ -4,3 +4,32 @@
 *.user
 *.swp
 *~
+
+# Local/company Ansible data. Keep real inventories outside this repository.
+/*.yml
+/*.yaml
+/inventories/
+/host_vars/
+/group_vars/
+/ansible.cfg
+/.ansible/
+*.retry
+
+# Local secrets and credentials.
+/.env
+/.env.*
+!/.env.example
+/secrets/
+/credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+.vault_pass*
+vault_password*
+
+# Runtime/debug output.
+*.log
+/app.log
