@@ -30,6 +30,7 @@ public:
     Q_INVOKABLE void toggle(int row);
     Q_INVOKABLE void expandAll();
     Q_INVOKABLE void collapseAll();
+    Q_INVOKABLE void setProblemsFirst(bool enabled);
 
     void rebuild();
 
@@ -48,8 +49,10 @@ private:
                      const QString &sourceGroup,
                      int depth,
                      QSet<QString> &path);
+    int hostProblemRank(const QString &hostName) const;
 
     InventoryDocument *m_document {nullptr};
     QVector<Row> m_rows;
     QSet<QString> m_expanded;
+    bool m_problemsFirst {false};
 };
