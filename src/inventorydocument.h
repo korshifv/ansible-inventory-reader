@@ -13,6 +13,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <memory>
+#include <utility>
 
 class InventoryTreeModel;
 
