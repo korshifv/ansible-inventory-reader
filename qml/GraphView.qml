@@ -6,11 +6,13 @@ Item {
 
     property var nodes: []
     property var edges: []
+    property var pingStates: ({})
     property real graphWidth: 1000
     property real graphHeight: 700
     property string searchText: ""
     property string selectedType: ""
     property string selectedName: ""
+    property color dangerColor: "#e05252"
 
     signal nodeSelected(string type, string name)
 
@@ -49,7 +51,6 @@ Item {
             children[edge.from].push(edge.to)
         }
 
-        // Selecting any child keeps its full ancestry visible, all the way to `all`.
         let queue = [selected]
         let cursor = 0
         while (cursor < queue.length) {
@@ -64,8 +65,6 @@ Item {
             }
         }
 
-        // A group behaves like a folder: selecting it lights up everything below it,
-        // including nested groups and hosts in those groups.
         if (type === "group") {
             queue = [selected]
             cursor = 0
@@ -88,7 +87,6 @@ Item {
     function buildDisplayPositions(graphNodes, relationSet, selectionName) {
         const positions = ({})
 
-        // With no selection, preserve the canonical layout produced by C++.
         if (selectionName.length === 0) {
             for (let i = 0; i < graphNodes.length; ++i) {
                 const node = graphNodes[i]
@@ -102,9 +100,6 @@ Item {
             return positions
         }
 
-        // Nodes are laid out in vertical columns (same x = same depth). Keep those
-        // columns intact, but stable-partition every column so highlighted nodes
-        // occupy its top slots. Nothing in the actual inventory model is reordered.
         const columns = ({})
         for (let i = 0; i < graphNodes.length; ++i) {
             const node = graphNodes[i]
@@ -160,7 +155,6 @@ Item {
     }
 
     function scheduleEdgeFrames() {
-        // One repaint per display frame, regardless of how many cards are moving.
         edgeFrameTimer.running = false
         edgeFrameTimer.elapsed = 0
         edgeCanvas.requestPaint()
@@ -220,7 +214,6 @@ Item {
             elapsed += interval
             if (elapsed >= root.moveDuration + 48) {
                 running = false
-                // One final settled frame restores all faint background edges.
                 edgeCanvas.requestPaint()
             }
         }
@@ -232,9 +225,6 @@ Item {
         z: -2
     }
 
-    // Important: this canvas is viewport-sized, not graph-sized. A very tall
-    // inventory therefore does not allocate and clear a gigantic backing image
-    // for every animation frame.
     Canvas {
         id: edgeCanvas
         anchors.fill: parent
@@ -254,8 +244,6 @@ Item {
                 const edge = root.edges[i]
                 const related = root.edgeIsRelated(edge)
 
-                // While a branch is flying into focus, don't waste paint time on
-                // unrelated spaghetti that is intentionally almost invisible anyway.
                 if (motionActive && hasSelection && !related)
                     continue
 
@@ -280,7 +268,6 @@ Item {
                 const x2 = root.worldToViewportX(toX)
                 const y2 = root.worldToViewportY(toY + toHeight / 2)
 
-                // Curves outside the viewport never hit the backing image at all.
                 if (Math.max(x1, x2) < -margin
                         || Math.min(x1, x2) > width + margin
                         || Math.max(y1, y2) < -margin
@@ -288,9 +275,6 @@ Item {
                     continue
 
                 const dx = Math.max(28, (x2 - x1) * 0.45)
-
-                // Canvas now lives in screen coordinates, so line width stays constant
-                // and does not need to be divided by zoom.
                 ctx.lineWidth = related ? 3.0 : 1.5
                 ctx.strokeStyle = related ? highlightColor : normalColor
                 ctx.globalAlpha = related ? 1.0 : (hasSelection ? 0.13 : 0.75)
@@ -338,6 +322,13 @@ Item {
                     property bool related: root.isRelated(modelData.type, modelData.name)
                     property bool hasSelection: root.selectedName.length > 0
                     property var displayPosition: root.positionFor(modelData)
+                    property var pingInfo: modelData.type === "host"
+                                           ? (root.pingStates[modelData.name] || ({}))
+                                           : ({})
+                    property bool pingBad: pingInfo.state === "unreachable"
+                                           || pingInfo.state === "failed"
+                                           || pingInfo.state === "error"
+                    property bool pingChecking: pingInfo.state === "checking"
                     property real focusScale: selected ? 1.02 : 1.0
 
                     x: displayPosition.x
@@ -351,12 +342,14 @@ Item {
                     opacity: !root.matches(modelData)
                              ? 0.10
                              : (hasSelection && !related ? 0.18 : 1.0)
-                    color: modelData.type === "group" ? palette.alternateBase : palette.button
-                    border.width: selected ? 3.0 : (related ? 2.0 : 1.0)
-                    border.color: selected || related ? palette.highlight : palette.mid
+                    color: pingBad
+                           ? Qt.rgba(0.88, 0.22, 0.22, 0.13)
+                           : (modelData.type === "group" ? palette.alternateBase : palette.button)
+                    border.width: selected ? 3.0 : (related || pingBad ? 2.0 : 1.0)
+                    border.color: pingBad
+                                  ? root.dangerColor
+                                  : (selected || related ? palette.highlight : palette.mid)
 
-                    // Focus mode only changes vertical order. Scene graph handles the
-                    // cards; the lightweight viewport canvas follows them at frame rate.
                     Behavior on y {
                         NumberAnimation {
                             duration: root.moveDuration
@@ -383,8 +376,10 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 2
                         radius: Math.max(0, parent.radius - 2)
-                        color: palette.highlight
-                        opacity: nodeCard.selected ? 0.20 : (nodeCard.related ? 0.07 : 0.0)
+                        color: nodeCard.pingBad ? root.dangerColor : palette.highlight
+                        opacity: nodeCard.pingBad
+                                 ? 0.08
+                                 : (nodeCard.selected ? 0.20 : (nodeCard.related ? 0.07 : 0.0))
 
                         Behavior on opacity {
                             NumberAnimation {
@@ -401,17 +396,26 @@ Item {
 
                         Text {
                             width: parent.width
-                            text: (modelData.type === "group" ? "▣  " : "●  ") + modelData.name
-                            color: palette.text
+                            text: (modelData.type === "group" ? "▣  " : (nodeCard.pingChecking ? "◌  " : "●  "))
+                                  + modelData.name
+                            color: nodeCard.pingBad ? root.dangerColor : palette.text
                             font.weight: nodeCard.selected ? Font.Bold : Font.DemiBold
                             elide: Text.ElideRight
                         }
 
                         Text {
                             width: parent.width
-                            visible: (modelData.subtitle || "").length > 0
-                            text: modelData.subtitle || ""
-                            color: palette.placeholderText
+                            visible: displayText.length > 0
+                            property string displayText: {
+                                const base = modelData.subtitle || ""
+                                if (nodeCard.pingBad && nodeCard.pingInfo.reason)
+                                    return base.length > 0 ? base + " · " + nodeCard.pingInfo.reason : nodeCard.pingInfo.reason
+                                if (nodeCard.pingChecking)
+                                    return base.length > 0 ? base + " · checking…" : "checking…"
+                                return base
+                            }
+                            text: displayText
+                            color: nodeCard.pingBad ? root.dangerColor : palette.placeholderText
                             font.pixelSize: 11
                             elide: Text.ElideRight
                         }
