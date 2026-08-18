@@ -20,6 +20,7 @@ qt_add_executable(ansible-inventory-studio
     src/inventorydocument_io.cpp
     src/inventorydocument_edit.cpp
     src/inventorydocument_graph.cpp
+    src/inventorydocument_ping.cpp
     src/inventorydocument.h
     src/inventorytreemodel.cpp
     src/inventorytreemodel.h
