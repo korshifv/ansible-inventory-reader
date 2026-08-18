@@ -23,6 +23,7 @@ ApplicationWindow {
     property string createKind: "host"
     property string createParent: "all"
     property bool rawPingExpanded: false
+    property bool problemsFirst: false
     property color dangerColor: "#e05252"
     property color warningColor: "#d69a3a"
     property color successColor: "#58a65c"
@@ -273,6 +274,17 @@ ApplicationWindow {
                 visible: inventory.pingRunning
                 onClicked: inventory.cancelPing()
             }
+            ToolButton {
+                text: "Problems first"
+                checkable: true
+                checked: window.problemsFirst
+                onToggled: {
+                    window.problemsFirst = checked
+                    inventoryTreeModel.setProblemsFirst(checked)
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: "Move unreachable hosts to the top, followed by failed hosts"
+            }
 
             Item { Layout.fillWidth: true }
 
@@ -412,6 +424,7 @@ ApplicationWindow {
             nodes: inventory.graphNodes
             edges: inventory.graphEdges
             pingStates: inventory.pingStates
+            problemsFirst: window.problemsFirst
             graphWidth: inventory.graphWidth
             graphHeight: inventory.graphHeight
             searchText: searchField.text
