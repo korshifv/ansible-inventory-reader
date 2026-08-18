@@ -159,8 +159,6 @@ Item {
                 }
             }
 
-            // Problem-first ordering only reuses slots already occupied by hosts.
-            // Group cards keep the focus layout exactly where it put them.
             if (sortProblems) {
                 const hosts = []
                 const hostSlots = []
@@ -206,14 +204,6 @@ Item {
         edgeFrameTimer.elapsed = 0
         edgeCanvas.requestPaint()
         edgeFrameTimer.running = true
-    }
-
-    function worldToViewportX(x) {
-        return x * zoom - flick.contentX
-    }
-
-    function worldToViewportY(y) {
-        return y * zoom - flick.contentY
     }
 
     function isRelated(type, name) {
@@ -302,18 +292,18 @@ Item {
                 if ((!fromItem && !fromFallback) || (!toItem && !toFallback))
                     continue
 
-                const fromX = fromItem ? fromItem.x : fromFallback.x
-                const fromY = fromItem ? fromItem.y : fromFallback.y
-                const fromWidth = fromItem ? fromItem.width : fromFallback.width
-                const fromHeight = fromItem ? fromItem.height : fromFallback.height
-                const toX = toItem ? toItem.x : toFallback.x
-                const toY = toItem ? toItem.y : toFallback.y
-                const toHeight = toItem ? toItem.height : toFallback.height
+                const fromX = fromItem ? fromItem.x : fromFallback.x * root.zoom
+                const fromY = fromItem ? fromItem.y : fromFallback.y * root.zoom
+                const fromWidth = fromItem ? fromItem.width : fromFallback.width * root.zoom
+                const fromHeight = fromItem ? fromItem.height : fromFallback.height * root.zoom
+                const toX = toItem ? toItem.x : toFallback.x * root.zoom
+                const toY = toItem ? toItem.y : toFallback.y * root.zoom
+                const toHeight = toItem ? toItem.height : toFallback.height * root.zoom
 
-                const x1 = root.worldToViewportX(fromX + fromWidth)
-                const y1 = root.worldToViewportY(fromY + fromHeight / 2)
-                const x2 = root.worldToViewportX(toX)
-                const y2 = root.worldToViewportY(toY + toHeight / 2)
+                const x1 = fromX + fromWidth - flick.contentX
+                const y1 = fromY + fromHeight / 2 - flick.contentY
+                const x2 = toX - flick.contentX
+                const y2 = toY + toHeight / 2 - flick.contentY
 
                 if (Math.max(x1, x2) < -margin
                         || Math.min(x1, x2) > width + margin
@@ -321,8 +311,8 @@ Item {
                         || Math.min(y1, y2) > height + margin)
                     continue
 
-                const dx = Math.max(28, (x2 - x1) * 0.45)
-                ctx.lineWidth = related ? 3.0 : 1.5
+                const dx = Math.max(28 * root.zoom, (x2 - x1) * 0.45)
+                ctx.lineWidth = (related ? 3.0 : 1.5) * Math.max(0.7, root.zoom)
                 ctx.strokeStyle = related ? highlightColor : normalColor
                 ctx.globalAlpha = related ? 1.0 : (hasSelection ? 0.13 : 0.75)
                 ctx.beginPath()
@@ -351,10 +341,8 @@ Item {
 
         Item {
             id: world
-            width: root.graphWidth
-            height: root.graphHeight
-            scale: root.zoom
-            transformOrigin: Item.TopLeft
+            width: root.graphWidth * root.zoom
+            height: root.graphHeight * root.zoom
 
             Repeater {
                 id: nodeRepeater
@@ -369,6 +357,8 @@ Item {
                     property bool related: root.isRelated(modelData.type, modelData.name)
                     property bool hasSelection: root.selectedName.length > 0
                     property var displayPosition: root.positionFor(modelData)
+                    property real layoutX: displayPosition.x
+                    property real layoutY: displayPosition.y
                     property var pingInfo: modelData.type === "host"
                                            ? (root.pingStates[modelData.name] || ({}))
                                            : ({})
@@ -381,14 +371,14 @@ Item {
                                                 ? root.dangerColor
                                                 : (pingFailed ? root.warningColor : palette.placeholderText)
                     property real focusScale: selected ? 1.02 : 1.0
+                    property real cardZoom: root.zoom * focusScale
 
-                    x: displayPosition.x
-                    y: displayPosition.y
-                    width: modelData.width
-                    height: modelData.height
-                    radius: 9
+                    x: layoutX * root.zoom
+                    y: layoutY * root.zoom
+                    width: modelData.width * root.zoom
+                    height: modelData.height * root.zoom
+                    radius: Math.max(4, Math.round(9 * root.zoom))
                     z: selected ? 3 : (related ? 2 : 1)
-                    scale: focusScale
                     transformOrigin: Item.Center
                     opacity: !root.matches(modelData)
                              ? 0.10
@@ -398,12 +388,12 @@ Item {
                            : (pingFailed
                               ? Qt.rgba(0.84, 0.55, 0.20, 0.13)
                               : (modelData.type === "group" ? palette.alternateBase : palette.button))
-                    border.width: selected ? 3.0 : (related || pingBad ? 2.0 : 1.0)
+                    border.width: Math.max(1, (selected ? 3.0 : (related || pingBad ? 2.0 : 1.0)) * root.zoom)
                     border.color: pingBad
                                   ? statusColor
                                   : (selected || related ? palette.highlight : palette.mid)
 
-                    Behavior on y {
+                    Behavior on layoutY {
                         NumberAnimation {
                             duration: root.moveDuration
                             easing.type: Easing.OutCubic
@@ -415,20 +405,14 @@ Item {
                             easing.type: Easing.OutCubic
                         }
                     }
-                    Behavior on focusScale {
-                        NumberAnimation {
-                            duration: 120
-                            easing.type: Easing.OutCubic
-                        }
-                    }
 
                     Component.onCompleted: root.registerNode(modelData.id, nodeCard)
                     Component.onDestruction: root.unregisterNode(modelData.id, nodeCard)
 
                     Rectangle {
                         anchors.fill: parent
-                        anchors.margins: 2
-                        radius: Math.max(0, parent.radius - 2)
+                        anchors.margins: Math.max(1, Math.round(2 * root.zoom))
+                        radius: Math.max(2, parent.radius - Math.max(1, Math.round(2 * root.zoom)))
                         color: nodeCard.pingBad ? nodeCard.statusColor : palette.highlight
                         opacity: nodeCard.pingBad
                                  ? 0.08
@@ -444,21 +428,23 @@ Item {
 
                     Column {
                         anchors.fill: parent
-                        anchors.margins: 9
-                        spacing: 2
+                        anchors.margins: Math.max(4, Math.round(9 * root.zoom))
+                        spacing: Math.max(1, Math.round(2 * root.zoom))
 
                         Text {
                             width: parent.width
                             text: (modelData.type === "group" ? "▣  " : (nodeCard.pingChecking ? "◌  " : "●  "))
                                   + modelData.name
                             color: nodeCard.pingBad ? nodeCard.statusColor : palette.text
+                            font.pixelSize: Math.max(9, Math.round(13 * root.zoom * nodeCard.focusScale))
                             font.weight: nodeCard.selected ? Font.Bold : Font.DemiBold
                             elide: Text.ElideRight
+                            renderType: Text.QtRendering
                         }
 
                         Text {
                             width: parent.width
-                            visible: displayText.length > 0
+                            visible: displayText.length > 0 && root.zoom >= 0.42
                             property string displayText: {
                                 const base = modelData.subtitle || ""
                                 if (nodeCard.pingBad && nodeCard.pingInfo.reason)
@@ -469,8 +455,9 @@ Item {
                             }
                             text: displayText
                             color: nodeCard.pingBad ? nodeCard.statusColor : palette.placeholderText
-                            font.pixelSize: 11
+                            font.pixelSize: Math.max(8, Math.round(11 * root.zoom * nodeCard.focusScale))
                             elide: Text.ElideRight
+                            renderType: Text.QtRendering
                         }
                     }
 
