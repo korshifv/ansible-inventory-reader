@@ -17,12 +17,19 @@ ApplicationWindow {
     property string selectedType: ""
     property string selectedName: ""
     property var selectedDetails: ({})
+    property var selectedPingInfo: selectedType === "host"
+                                   ? (inventory.pingStates[selectedName] || ({}))
+                                   : ({})
     property string createKind: "host"
     property string createParent: "all"
+    property bool rawPingExpanded: false
+    property color dangerColor: "#e05252"
+    property color successColor: "#58a65c"
 
     function selectNode(type, name) {
         selectedType = type
         selectedName = name
+        rawPingExpanded = false
         refreshDetails()
     }
 
@@ -54,6 +61,24 @@ ApplicationWindow {
         return result
     }
 
+    function pingIsBad(info) {
+        return info.state === "unreachable"
+               || info.state === "failed"
+               || info.state === "error"
+    }
+
+    function pingStatusText(info) {
+        if (!info || !info.state || info.state === "unknown")
+            return "Not checked"
+        if (info.state === "checking")
+            return "Checking…"
+        if (info.state === "reachable")
+            return "pong"
+        if (info.state === "cancelled")
+            return "Cancelled"
+        return info.reason || "Other"
+    }
+
     Connections {
         target: inventory
         function onStructureChanged() {
@@ -72,6 +97,7 @@ ApplicationWindow {
                 selectedType = ""
                 selectedName = ""
                 selectedDetails = ({})
+                rawPingExpanded = false
             }
         }
     }
@@ -135,6 +161,7 @@ ApplicationWindow {
                     selectedType = ""
                     selectedName = ""
                     selectedDetails = ({})
+                    rawPingExpanded = false
                 }
             }
             Action { text: "Open…"; shortcut: StandardKey.Open; onTriggered: openDialog.open() }
@@ -195,8 +222,26 @@ ApplicationWindow {
                         selectedType = ""
                         selectedName = ""
                         selectedDetails = ({})
+                        rawPingExpanded = false
                     }
                 }
+            }
+
+            ToolSeparator {}
+
+            ToolButton {
+                text: inventory.pingRunning
+                      ? "Ping " + inventory.pingCompleted + "/" + inventory.pingTotal
+                      : "Ping all"
+                enabled: !inventory.pingRunning
+                onClicked: inventory.pingAll()
+                ToolTip.visible: hovered
+                ToolTip.text: "ansible all -i <inventory> -m ping"
+            }
+            ToolButton {
+                text: "Cancel"
+                visible: inventory.pingRunning
+                onClicked: inventory.cancelPing()
             }
 
             Item { Layout.fillWidth: true }
@@ -217,10 +262,13 @@ ApplicationWindow {
 
             Label {
                 Layout.fillWidth: true
-                text: inventory.errorString.length > 0
-                      ? inventory.errorString
-                      : (inventory.modified ? "Modified" : "Ready")
-                color: inventory.errorString.length > 0 ? palette.brightText : palette.text
+                text: inventory.pingRunning
+                      ? "Ansible ping: " + inventory.pingCompleted + "/" + inventory.pingTotal
+                      : (inventory.errorString.length > 0
+                         ? inventory.errorString
+                         : (inventory.modified ? "Modified" : "Ready"))
+                color: inventory.errorString.length > 0 && !inventory.pingRunning
+                       ? palette.brightText : palette.text
                 elide: Text.ElideRight
             }
 
@@ -273,6 +321,12 @@ ApplicationWindow {
                         required property bool expanded
                         required property string sourceGroup
 
+                        property var pingInfo: nodeType === "host"
+                                               ? (inventory.pingStates[name] || ({}))
+                                               : ({})
+                        property bool pingBad: window.pingIsBad(pingInfo)
+                        property bool pingChecking: pingInfo.state === "checking"
+
                         width: ListView.view.width
                         height: 36
                         leftPadding: 8 + depth * 18
@@ -294,13 +348,16 @@ ApplicationWindow {
 
                             Label {
                                 visible: treeDelegate.nodeType === "host"
-                                text: "●"
-                                color: palette.placeholderText
+                                text: treeDelegate.pingChecking ? "◌" : "●"
+                                color: treeDelegate.pingBad
+                                       ? window.dangerColor
+                                       : (treeDelegate.pingChecking ? palette.highlight : palette.placeholderText)
                             }
 
                             Label {
                                 Layout.fillWidth: true
                                 text: treeDelegate.name
+                                color: treeDelegate.pingBad ? window.dangerColor : palette.text
                                 elide: Text.ElideRight
                                 font.weight: treeDelegate.nodeType === "group" ? Font.DemiBold : Font.Normal
                             }
@@ -323,6 +380,7 @@ ApplicationWindow {
             SplitView.minimumWidth: 420
             nodes: inventory.graphNodes
             edges: inventory.graphEdges
+            pingStates: inventory.pingStates
             graphWidth: inventory.graphWidth
             graphHeight: inventory.graphHeight
             searchText: searchField.text
@@ -333,8 +391,8 @@ ApplicationWindow {
 
         Pane {
             id: inspector
-            SplitView.preferredWidth: 380
-            SplitView.minimumWidth: 300
+            SplitView.preferredWidth: 390
+            SplitView.minimumWidth: 310
 
             ScrollView {
                 anchors.fill: parent
@@ -372,6 +430,93 @@ ApplicationWindow {
                                     if (inventory.renameNode(selectedType, selectedName, newName)) {
                                         selectedName = newName
                                         refreshDetails()
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            id: pingPanel
+                            Layout.fillWidth: true
+                            visible: selectedType === "host"
+                            radius: 8
+                            color: window.pingIsBad(selectedPingInfo)
+                                   ? Qt.rgba(0.88, 0.22, 0.22, 0.08)
+                                   : palette.alternateBase
+                            border.width: 1
+                            border.color: window.pingIsBad(selectedPingInfo)
+                                          ? window.dangerColor : palette.mid
+                            implicitHeight: pingPanelContent.implicitHeight + 20
+
+                            ColumnLayout {
+                                id: pingPanelContent
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: 10
+                                spacing: 7
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+
+                                    Label {
+                                        text: "Ansible ping"
+                                        font.weight: Font.DemiBold
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    Label {
+                                        text: window.pingStatusText(selectedPingInfo)
+                                        color: selectedPingInfo.state === "reachable"
+                                               ? window.successColor
+                                               : (window.pingIsBad(selectedPingInfo)
+                                                  ? window.dangerColor : palette.placeholderText)
+                                        font.weight: selectedPingInfo.state === "reachable"
+                                                     || window.pingIsBad(selectedPingInfo)
+                                                     ? Font.DemiBold : Font.Normal
+                                    }
+
+                                    Button {
+                                        text: selectedPingInfo.state === "checking" ? "Checking…" : "Ping"
+                                        enabled: !inventory.pingRunning
+                                        onClicked: inventory.pingHost(selectedName)
+                                    }
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "Target: " + (selectedPingInfo.target
+                                                        || selectedDetails.ansibleHost
+                                                        || selectedName)
+                                    color: palette.placeholderText
+                                    elide: Text.ElideMiddle
+                                }
+
+                                ToolButton {
+                                    Layout.alignment: Qt.AlignLeft
+                                    visible: (selectedPingInfo.raw || "").length > 0
+                                    text: (rawPingExpanded ? "▾  " : "▸  ") + "Raw Ansible output"
+                                    onClicked: rawPingExpanded = !rawPingExpanded
+                                }
+
+                                ScrollView {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 145
+                                    visible: rawPingExpanded && (selectedPingInfo.raw || "").length > 0
+                                    clip: true
+
+                                    TextArea {
+                                        text: selectedPingInfo.raw || ""
+                                        readOnly: true
+                                        selectByMouse: true
+                                        wrapMode: TextEdit.NoWrap
+                                        font.family: "monospace"
+                                        background: Rectangle {
+                                            color: palette.base
+                                            border.color: palette.mid
+                                            radius: 5
+                                        }
                                     }
                                 }
                             }
