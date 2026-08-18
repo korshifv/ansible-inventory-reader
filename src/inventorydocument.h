@@ -2,10 +2,13 @@
 
 #include <QObject>
 #include <QHash>
+#include <QProcess>
 #include <QSet>
 #include <QStringList>
+#include <QTemporaryFile>
 #include <QUrl>
 #include <QVariantList>
+#include <QVariantMap>
 
 #include <yaml-cpp/yaml.h>
 
@@ -24,6 +27,10 @@ class InventoryDocument final : public QObject
     Q_PROPERTY(qreal graphWidth READ graphWidth NOTIFY graphChanged)
     Q_PROPERTY(qreal graphHeight READ graphHeight NOTIFY graphChanged)
     Q_PROPERTY(QStringList groupNames READ groupNames NOTIFY structureChanged)
+    Q_PROPERTY(QVariantMap pingStates READ pingStates NOTIFY pingStateChanged)
+    Q_PROPERTY(bool pingRunning READ pingRunning NOTIFY pingStateChanged)
+    Q_PROPERTY(int pingCompleted READ pingCompleted NOTIFY pingStateChanged)
+    Q_PROPERTY(int pingTotal READ pingTotal NOTIFY pingStateChanged)
 
 public:
     explicit InventoryDocument(QObject *parent = nullptr);
@@ -37,6 +44,10 @@ public:
     qreal graphWidth() const;
     qreal graphHeight() const;
     QStringList groupNames() const;
+    QVariantMap pingStates() const;
+    bool pingRunning() const;
+    int pingCompleted() const;
+    int pingTotal() const;
 
     InventoryTreeModel *treeModel() const;
 
@@ -63,12 +74,17 @@ public:
     Q_INVOKABLE bool setNodeVarsYaml(const QString &type, const QString &name, const QString &yamlText);
     Q_INVOKABLE QString nodeVarsYaml(const QString &type, const QString &name) const;
 
+    Q_INVOKABLE bool pingAll();
+    Q_INVOKABLE bool pingHost(const QString &hostName);
+    Q_INVOKABLE void cancelPing();
+
 signals:
     void filePathChanged();
     void modifiedChanged();
     void errorStringChanged();
     void structureChanged();
     void graphChanged();
+    void pingStateChanged();
 
 private:
     struct HostRecord {
@@ -85,6 +101,13 @@ private:
         QSet<QString> children;
         QSet<QString> parents;
         QSet<QString> hosts;
+    };
+
+    struct PingRecord {
+        QString state {QStringLiteral("unknown")};
+        QString reason;
+        QString raw;
+        QString target;
     };
 
     friend class InventoryTreeModel;
@@ -110,6 +133,19 @@ private:
     bool groupReachable(const QString &from, const QString &target, QSet<QString> &seen) const;
     bool validateGroupGraph();
 
+    bool startPingRun(const QString &pattern, const QStringList &hosts);
+    QString pingInventoryPath();
+    QString pingTargetForHost(const HostRecord &host) const;
+    void consumePingStdout();
+    void processPingLine(const QString &line);
+    void finishPingRun(const QString &fallbackReason = QString(),
+                       const QString &fallbackRaw = QString());
+    void setPingResult(const QString &hostName,
+                       const QString &state,
+                       const QString &reason,
+                       const QString &raw);
+    static QString classifyPingReason(const QString &text);
+
     void setModified(bool value);
     void setError(const QString &message);
     void changed(bool markModified = true);
@@ -130,4 +166,15 @@ private:
     QVariantList m_graphEdges;
     qreal m_graphWidth {960.0};
     qreal m_graphHeight {640.0};
+
+    QHash<QString, PingRecord> m_pingResults;
+    QSet<QString> m_pingExpectedHosts;
+    QSet<QString> m_pingCompletedHosts;
+    QString m_pingStdoutBuffer;
+    QString m_pingStderrBuffer;
+    QProcess *m_pingProcess {nullptr};
+    QTemporaryFile *m_pingSnapshot {nullptr};
+    bool m_pingRunning {false};
+    int m_pingCompleted {0};
+    int m_pingTotal {0};
 };
