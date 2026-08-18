@@ -10,6 +10,31 @@
 namespace {
 const QRegularExpression kAnsibleResultLine(
     QStringLiteral(R"(^(.+?)\s+\|\s+([A-Z]+!?)[ \t]*=>[ \t]*(.*)$)"));
+
+bool looksLikeControllerWarning(const QString &text)
+{
+    const QString lower = text.toLower();
+    return lower.contains(QStringLiteral("[warning]"))
+        || lower.contains(QStringLiteral("[deprecation warning]"))
+        || lower.contains(QStringLiteral("deprecation warnings can be disabled"));
+}
+
+QString hostFallbackRaw(const QString &controllerStderr)
+{
+    const QString raw = controllerStderr.trimmed();
+    if (raw.isEmpty())
+        return QStringLiteral("Ansible returned no host-specific result.");
+
+    if (looksLikeControllerWarning(raw)) {
+        return QStringLiteral(
+                   "Ansible returned no host-specific result.\n\n"
+                   "The text below came from the local Ansible controller and is not "
+                   "a failure reported by this host:\n\n")
+            + raw;
+    }
+
+    return raw;
+}
 }
 
 QVariantMap InventoryDocument::pingStates() const
@@ -119,6 +144,12 @@ bool InventoryDocument::startPingRun(const QString &pattern, const QStringList &
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     environment.insert(QStringLiteral("ANSIBLE_NOCOLOR"), QStringLiteral("1"));
     environment.insert(QStringLiteral("ANSIBLE_FORCE_COLOR"), QStringLiteral("0"));
+
+    // The ansible command already uses the supported `minimal` callback by default.
+    // Keep its result JSON compact so every host result stays on one parseable line.
+    // This replaces the deprecated -o/oneline callback entirely.
+    environment.insert(QStringLiteral("ANSIBLE_CALLBACK_RESULT_FORMAT"), QStringLiteral("json"));
+    environment.insert(QStringLiteral("ANSIBLE_CALLBACK_FORMAT_PRETTY"), QStringLiteral("false"));
     m_pingProcess->setProcessEnvironment(environment);
 
     const QFileInfo inventoryInfo(inventoryPath);
@@ -159,11 +190,11 @@ bool InventoryDocument::startPingRun(const QString &pattern, const QStringList &
                 if (exitStatus == QProcess::CrashExit)
                     fallbackReason = QStringLiteral("Ansible process crashed");
                 else if (exitCode != 0)
-                    fallbackReason = QStringLiteral("No result from Ansible");
+                    fallbackReason = QStringLiteral("No host result from Ansible");
                 else
                     fallbackReason = QStringLiteral("No ping result returned");
 
-                finishPingRun(fallbackReason, m_pingStderrBuffer.trimmed());
+                finishPingRun(fallbackReason, hostFallbackRaw(m_pingStderrBuffer));
             });
 
     m_pingRunning = true;
@@ -173,8 +204,7 @@ bool InventoryDocument::startPingRun(const QString &pattern, const QStringList &
     const QStringList arguments {
         pattern,
         QStringLiteral("-i"), inventoryInfo.absoluteFilePath(),
-        QStringLiteral("-m"), QStringLiteral("ping"),
-        QStringLiteral("-o")
+        QStringLiteral("-m"), QStringLiteral("ping")
     };
     m_pingProcess->start(QStringLiteral("ansible"), arguments);
     return true;
@@ -291,9 +321,6 @@ void InventoryDocument::processPingLine(const QString &line)
         pingValue = object.value(QStringLiteral("ping")).toString();
     }
 
-    // We invoke ansible.builtin.ping with its default data value. A SUCCESS result
-    // therefore means the connection/module execution worked and the semantic result
-    // is pong, even if a custom callback made the payload hard to JSON-decode.
     if (status == QStringLiteral("SUCCESS")) {
         setPingResult(hostName,
                       QStringLiteral("reachable"),
@@ -369,6 +396,9 @@ QString InventoryDocument::classifyPingReason(const QString &text)
 {
     const QString lower = text.toLower();
 
+    if (lower.contains(QStringLiteral("ansible requires python"))
+        && lower.contains(QStringLiteral("current version")))
+        return QStringLiteral("Python too old");
     if (lower.contains(QStringLiteral("permission denied"))
         || lower.contains(QStringLiteral("authentication failed")))
         return QStringLiteral("Permission denied");
