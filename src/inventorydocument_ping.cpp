@@ -22,31 +22,12 @@ bool looksLikeControllerWarning(const QString &text)
 QString stripOpenSshPostQuantumWarning(QString text)
 {
     // OpenSSH emits this advisory before the actual connection error on older
-    // servers. It is useful on a terminal, but it obscures the host-specific
-    // failure in the compact diagnostics panel. Strip only this known block.
-    static const QStringList actualLines {
-        QStringLiteral("** WARNING: connection is not using a post-quantum key exchange algorithm.\r\n"),
-        QStringLiteral("** WARNING: connection is not using a post-quantum key exchange algorithm.\n"),
-        QStringLiteral("** This session may be vulnerable to \"store now, decrypt later\" attacks.\r\n"),
-        QStringLiteral("** This session may be vulnerable to \"store now, decrypt later\" attacks.\n"),
-        QStringLiteral("** The server may need to be upgraded. See https://openssh.com/pq.html\r\n"),
-        QStringLiteral("** The server may need to be upgraded. See https://openssh.com/pq.html\n")
-    };
+    // servers. Keep the warning on the terminal, but hide this specific block
+    // from the compact per-host diagnostics shown by the application.
+    static const QRegularExpression warningBlock(QStringLiteral(
+        R"(\*\* WARNING: connection is not using a post-quantum key exchange algorithm\.\r?\n\*\* This session may be vulnerable to "store now, decrypt later" attacks\.\r?\n\*\* The server may need to be upgraded\. See https://openssh\.com/pq\.html\r?\n?)"));
 
-    static const QStringList jsonEscapedLines {
-        QStringLiteral("** WARNING: connection is not using a post-quantum key exchange algorithm.\\r\\n"),
-        QStringLiteral("** WARNING: connection is not using a post-quantum key exchange algorithm.\\n"),
-        QStringLiteral("** This session may be vulnerable to \\\"store now, decrypt later\\\" attacks.\\r\\n"),
-        QStringLiteral("** This session may be vulnerable to \\\"store now, decrypt later\\\" attacks.\\n"),
-        QStringLiteral("** The server may need to be upgraded. See https://openssh.com/pq.html\\r\\n"),
-        QStringLiteral("** The server may need to be upgraded. See https://openssh.com/pq.html\\n")
-    };
-
-    for (const QString &line : actualLines)
-        text.replace(line, QString());
-    for (const QString &line : jsonEscapedLines)
-        text.replace(line, QString());
-
+    text.remove(warningBlock);
     return text.trimmed();
 }
 
@@ -139,7 +120,7 @@ void InventoryDocument::cancelPing()
 bool InventoryDocument::startPingRun(const QString &pattern, const QStringList &hosts)
 {
     if (m_pingRunning) {
-        setError(QStringLiteral("An Anible ping is already running."));
+        setError(QStringLiteral("An Ansible ping is already running."));
         return false;
     }
 
@@ -344,24 +325,35 @@ void InventoryDocument::processPingLine(const QString &line)
 
     QString message = payload;
     QString pingValue;
+    QString cleanRaw = stripOpenSshPostQuantumWarning(line);
+
     QJsonParseError jsonError;
     const QJsonDocument document = QJsonDocument::fromJson(payload.toUtf8(), &jsonError);
     if (jsonError.error == QJsonParseError::NoError && document.isObject()) {
-        const QJsonObject object = document.object();
+        QJsonObject object = document.object();
         message = object.value(QStringLiteral("msg")).toString(payload);
         pingValue = object.value(QStringLiteral("ping")).toString();
+
+        if (object.value(QStringLiteral("msg")).isString()) {
+            message = stripOpenSshPostQuantumWarning(message);
+            object.insert(QStringLiteral("msg"), message);
+        }
+
+        cleanRaw = QStringLiteral("%1 | %2 => %3")
+                       .arg(hostName,
+                            status,
+                            QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)));
     }
 
     if (status == QStringLiteral("SUCCESS")) {
         setPingResult(hostName,
                       QStringLiteral("reachable"),
                       pingValue.isEmpty() ? QStringLiteral("pong") : pingValue,
-                      stripOpenSshPostQuantumWarning(line));
+                      cleanRaw);
         return;
     }
 
-    const QString reason = classifyPingReason(message + QLatin1Char('\n') + line);
-    const QString cleanRaw = stripOpenSshPostQuantumWarning(line);
+    const QString reason = classifyPingReason(message + QLatin1Char('\n') + cleanRaw);
     if (status.startsWith(QStringLiteral("UNREACHABLE"))) {
         setPingResult(hostName, QStringLiteral("unreachable"), reason, cleanRaw);
     } else if (status.startsWith(QStringLiteral("FAILED"))) {
@@ -413,7 +405,7 @@ void InventoryDocument::setPingResult(const QString &hostName,
     PingRecord &record = m_pingResults[hostName];
     record.state = state;
     record.reason = reason;
-    record.raw = stripOpenSshPostQuantumWarning(raw);
+    record.raw = raw.trimmed();
     if (record.target.isEmpty())
         record.target = pingTargetForHost(m_hosts.constFind(hostName).value());
 
