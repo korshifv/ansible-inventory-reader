@@ -7,6 +7,7 @@ Item {
     property var nodes: []
     property var edges: []
     property var pingStates: ({})
+    property bool problemsFirst: false
     property real graphWidth: 1000
     property real graphHeight: 700
     property string searchText: ""
@@ -22,7 +23,8 @@ Item {
     property int fadeDuration: 140
     property int edgeFrameInterval: edges.length > 300 ? 24 : 16
     property var relatedIds: buildRelationSet(selectedType, selectedName, edges)
-    property var displayPositions: buildDisplayPositions(nodes, relatedIds, selectedName)
+    property var displayPositions: buildDisplayPositions(nodes, relatedIds, selectedName,
+                                                         pingStates, problemsFirst)
     property var nodeItems: ({})
 
     function nodeId(type, name) {
@@ -85,10 +87,29 @@ Item {
         return result
     }
 
-    function buildDisplayPositions(graphNodes, relationSet, selectionName) {
+    function problemOrderedHosts(hosts, states) {
+        const unreachable = []
+        const failed = []
+        const rest = []
+
+        for (let i = 0; i < hosts.length; ++i) {
+            const node = hosts[i]
+            const info = states[node.name] || ({})
+            if (info.state === "unreachable" || info.state === "error")
+                unreachable.push(node)
+            else if (info.state === "failed")
+                failed.push(node)
+            else
+                rest.push(node)
+        }
+
+        return unreachable.concat(failed, rest)
+    }
+
+    function buildDisplayPositions(graphNodes, relationSet, selectionName, states, sortProblems) {
         const positions = ({})
 
-        if (selectionName.length === 0) {
+        if (selectionName.length === 0 && !sortProblems) {
             for (let i = 0; i < graphNodes.length; ++i) {
                 const node = graphNodes[i]
                 positions[node.id] = {
@@ -121,13 +142,13 @@ Item {
             for (let i = 0; i < column.length; ++i) {
                 const node = column[i]
                 slots.push(node.y)
-                if (relationSet[node.id] === true)
+                if (selectionName.length > 0 && relationSet[node.id] === true)
                     highlighted.push(node)
                 else
                     rest.push(node)
             }
 
-            const ordered = highlighted.concat(rest)
+            const ordered = selectionName.length > 0 ? highlighted.concat(rest) : column
             for (let i = 0; i < ordered.length; ++i) {
                 const node = ordered[i]
                 positions[node.id] = {
@@ -135,6 +156,31 @@ Item {
                     y: slots[i],
                     width: node.width,
                     height: node.height
+                }
+            }
+
+            // Problem-first ordering only reuses slots already occupied by hosts.
+            // Group cards keep the focus layout exactly where it put them.
+            if (sortProblems) {
+                const hosts = []
+                const hostSlots = []
+                for (let i = 0; i < ordered.length; ++i) {
+                    const node = ordered[i]
+                    if (node.type !== "host")
+                        continue
+                    hosts.push(node)
+                    hostSlots.push(positions[node.id].y)
+                }
+
+                const problemOrdered = problemOrderedHosts(hosts, states)
+                for (let i = 0; i < problemOrdered.length; ++i) {
+                    const node = problemOrdered[i]
+                    positions[node.id] = {
+                        x: node.x,
+                        y: hostSlots[i],
+                        width: node.width,
+                        height: node.height
+                    }
                 }
             }
         }
