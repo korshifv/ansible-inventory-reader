@@ -24,6 +24,7 @@ ApplicationWindow {
     property string createParent: "all"
     property bool rawPingExpanded: false
     property color dangerColor: "#e05252"
+    property color warningColor: "#d69a3a"
     property color successColor: "#58a65c"
 
     function selectNode(type, name) {
@@ -61,10 +62,24 @@ ApplicationWindow {
         return result
     }
 
+    function pingIsUnreachable(info) {
+        return info.state === "unreachable" || info.state === "error"
+    }
+
+    function pingIsFailed(info) {
+        return info.state === "failed"
+    }
+
     function pingIsBad(info) {
-        return info.state === "unreachable"
-               || info.state === "failed"
-               || info.state === "error"
+        return pingIsUnreachable(info) || pingIsFailed(info)
+    }
+
+    function pingColor(info) {
+        if (pingIsUnreachable(info))
+            return dangerColor
+        if (pingIsFailed(info))
+            return warningColor
+        return palette.placeholderText
     }
 
     function pingStatusText(info) {
@@ -77,6 +92,21 @@ ApplicationWindow {
         if (info.state === "cancelled")
             return "Cancelled"
         return info.reason || "Other"
+    }
+
+    function pingDescription(info) {
+        if (!info || !info.state)
+            return ""
+        if (info.state === "failed") {
+            if (info.reason === "Python too old")
+                return "Host is reachable, but its Python is too old for this Ansible version."
+            return "Host is reachable, but Ansible failed while executing the ping module on the target."
+        }
+        if (info.state === "unreachable")
+            return "Ansible could not establish a usable connection to this host."
+        if (info.state === "error")
+            return "No host-specific result was returned by Ansible. Check the raw controller output below."
+        return ""
     }
 
     Connections {
@@ -326,6 +356,7 @@ ApplicationWindow {
                                                : ({})
                         property bool pingBad: window.pingIsBad(pingInfo)
                         property bool pingChecking: pingInfo.state === "checking"
+                        property color statusColor: window.pingColor(pingInfo)
 
                         width: ListView.view.width
                         height: 36
@@ -350,14 +381,14 @@ ApplicationWindow {
                                 visible: treeDelegate.nodeType === "host"
                                 text: treeDelegate.pingChecking ? "◌" : "●"
                                 color: treeDelegate.pingBad
-                                       ? window.dangerColor
+                                       ? treeDelegate.statusColor
                                        : (treeDelegate.pingChecking ? palette.highlight : palette.placeholderText)
                             }
 
                             Label {
                                 Layout.fillWidth: true
                                 text: treeDelegate.name
-                                color: treeDelegate.pingBad ? window.dangerColor : palette.text
+                                color: treeDelegate.pingBad ? treeDelegate.statusColor : palette.text
                                 elide: Text.ElideRight
                                 font.weight: treeDelegate.nodeType === "group" ? Font.DemiBold : Font.Normal
                             }
@@ -440,12 +471,14 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             visible: selectedType === "host"
                             radius: 8
-                            color: window.pingIsBad(selectedPingInfo)
+                            color: window.pingIsUnreachable(selectedPingInfo)
                                    ? Qt.rgba(0.88, 0.22, 0.22, 0.08)
-                                   : palette.alternateBase
+                                   : (window.pingIsFailed(selectedPingInfo)
+                                      ? Qt.rgba(0.84, 0.55, 0.20, 0.09)
+                                      : palette.alternateBase)
                             border.width: 1
                             border.color: window.pingIsBad(selectedPingInfo)
-                                          ? window.dangerColor : palette.mid
+                                          ? window.pingColor(selectedPingInfo) : palette.mid
                             implicitHeight: pingPanelContent.implicitHeight + 20
 
                             ColumnLayout {
@@ -471,7 +504,7 @@ ApplicationWindow {
                                         color: selectedPingInfo.state === "reachable"
                                                ? window.successColor
                                                : (window.pingIsBad(selectedPingInfo)
-                                                  ? window.dangerColor : palette.placeholderText)
+                                                  ? window.pingColor(selectedPingInfo) : palette.placeholderText)
                                         font.weight: selectedPingInfo.state === "reachable"
                                                      || window.pingIsBad(selectedPingInfo)
                                                      ? Font.DemiBold : Font.Normal
@@ -491,6 +524,14 @@ ApplicationWindow {
                                                         || selectedName)
                                     color: palette.placeholderText
                                     elide: Text.ElideMiddle
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    visible: window.pingDescription(selectedPingInfo).length > 0
+                                    text: window.pingDescription(selectedPingInfo)
+                                    color: palette.placeholderText
+                                    wrapMode: Text.WordWrap
                                 }
 
                                 ToolButton {
