@@ -17,6 +17,7 @@ Item {
     property real zoom: 1.0
     property var relatedIds: buildRelationSet(selectedType, selectedName, edges)
     property var displayPositions: buildDisplayPositions(nodes, relatedIds, selectedName)
+    property var animatedPositions: ({})
 
     function nodeId(type, name) {
         return type + ":" + name
@@ -146,6 +147,20 @@ Item {
         return displayPositions[node.id] || node
     }
 
+    function updateAnimatedPosition(id, x, y, width, height) {
+        animatedPositions[id] = {
+            x: x,
+            y: y,
+            width: width,
+            height: height
+        }
+        edgeCanvas.requestPaint()
+    }
+
+    function animatedPositionFor(id) {
+        return animatedPositions[id] || displayPositions[id]
+    }
+
     function isRelated(type, name) {
         if (selectedName.length === 0)
             return false
@@ -208,8 +223,8 @@ Item {
                         const edge = root.edges[i]
                         const related = root.edgeIsRelated(edge)
                         const hasSelection = root.selectedName.length > 0
-                        const from = root.displayPositions[edge.from]
-                        const to = root.displayPositions[edge.to]
+                        const from = root.animatedPositionFor(edge.from)
+                        const to = root.animatedPositionFor(edge.to)
 
                         if (!from || !to)
                             continue
@@ -255,18 +270,43 @@ Item {
                     property bool related: root.isRelated(modelData.type, modelData.name)
                     property bool hasSelection: root.selectedName.length > 0
                     property var displayPosition: root.positionFor(modelData)
+                    property real outlineWidth: selected ? 3.0 : (related ? 2.0 : 1.0)
+                    property real focusScale: selected ? 1.025 : (related ? 1.008 : 1.0)
 
                     x: displayPosition.x
                     y: displayPosition.y
                     width: modelData.width
                     height: modelData.height
                     radius: 9
+                    z: selected ? 3 : (related ? 2 : 1)
+                    scale: focusScale
+                    transformOrigin: Item.Center
                     opacity: !root.matches(modelData)
                              ? 0.10
                              : (hasSelection && !related ? 0.18 : 1.0)
                     color: modelData.type === "group" ? palette.alternateBase : palette.button
-                    border.width: selected ? 3.0 : (related ? 2.0 : 1.0)
+                    border.width: outlineWidth
                     border.color: selected || related ? palette.highlight : palette.mid
+
+                    Behavior on x {
+                        NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on y {
+                        NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on opacity {
+                        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on outlineWidth {
+                        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on focusScale {
+                        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                    }
+
+                    onXChanged: root.updateAnimatedPosition(modelData.id, x, y, width, height)
+                    onYChanged: root.updateAnimatedPosition(modelData.id, x, y, width, height)
+                    Component.onCompleted: root.updateAnimatedPosition(modelData.id, x, y, width, height)
 
                     Rectangle {
                         anchors.fill: parent
@@ -274,6 +314,10 @@ Item {
                         radius: Math.max(0, parent.radius - 2)
                         color: palette.highlight
                         opacity: nodeCard.selected ? 0.22 : (nodeCard.related ? 0.09 : 0.0)
+
+                        Behavior on opacity {
+                            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+                        }
                     }
 
                     Column {
