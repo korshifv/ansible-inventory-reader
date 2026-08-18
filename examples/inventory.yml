@@ -1,6 +1,6 @@
 all:
   vars:
-    ansible_user: root
+    ansible_user: deploy
   children:
     production:
     staging:
@@ -14,19 +14,19 @@ production:
 staging:
   hosts:
     stage-01:
-      ansible_host: 10.20.0.10
+      ansible_host: 192.0.2.30
 
 web:
   hosts:
     web-01:
-      ansible_host: 10.10.0.11
+      ansible_host: 192.0.2.11
     web-02:
-      ansible_host: 10.10.0.12
+      ansible_host: 192.0.2.12
 
 db:
   hosts:
     db-01:
-      ansible_host: 10.10.1.21
+      ansible_host: 198.51.100.21
 
 monitoring:
   hosts:
