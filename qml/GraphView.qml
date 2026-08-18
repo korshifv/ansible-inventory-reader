@@ -15,7 +15,7 @@ Item {
     signal nodeSelected(string type, string name)
 
     property real zoom: 1.0
-    property int moveDuration: 220
+    property int moveDuration: 210
     property int fadeDuration: 140
     property int edgeFrameInterval: edges.length > 300 ? 24 : 16
     property var relatedIds: buildRelationSet(selectedType, selectedName, edges)
@@ -161,12 +161,18 @@ Item {
 
     function scheduleEdgeFrames() {
         // One repaint per display frame, regardless of how many cards are moving.
-        // The old implementation repainted the whole edge canvas from every node's
-        // onYChanged callback, which exploded with large inventories.
         edgeFrameTimer.running = false
         edgeFrameTimer.elapsed = 0
         edgeCanvas.requestPaint()
         edgeFrameTimer.running = true
+    }
+
+    function worldToViewportX(x) {
+        return x * zoom - flick.contentX
+    }
+
+    function worldToViewportY(y) {
+        return y * zoom - flick.contentY
     }
 
     function isRelated(type, name) {
@@ -197,6 +203,7 @@ Item {
         zoom = Math.min(1.0, zx, zy)
         flick.contentX = 0
         flick.contentY = 0
+        edgeCanvas.requestPaint()
     }
 
     onDisplayPositionsChanged: scheduleEdgeFrames()
@@ -213,6 +220,7 @@ Item {
             elapsed += interval
             if (elapsed >= root.moveDuration + 48) {
                 running = false
+                // One final settled frame restores all faint background edges.
                 edgeCanvas.requestPaint()
             }
         }
@@ -221,15 +229,94 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: palette.base
+        z: -2
+    }
+
+    // Important: this canvas is viewport-sized, not graph-sized. A very tall
+    // inventory therefore does not allocate and clear a gigantic backing image
+    // for every animation frame.
+    Canvas {
+        id: edgeCanvas
+        anchors.fill: parent
+        z: -1
+
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.clearRect(0, 0, width, height)
+
+            const hasSelection = root.selectedName.length > 0
+            const motionActive = edgeFrameTimer.running
+            const highlightColor = palette.highlight
+            const normalColor = palette.mid
+            const margin = 100
+
+            for (let i = 0; i < root.edges.length; ++i) {
+                const edge = root.edges[i]
+                const related = root.edgeIsRelated(edge)
+
+                // While a branch is flying into focus, don't waste paint time on
+                // unrelated spaghetti that is intentionally almost invisible anyway.
+                if (motionActive && hasSelection && !related)
+                    continue
+
+                const fromItem = root.nodeItems[edge.from]
+                const toItem = root.nodeItems[edge.to]
+                const fromFallback = root.displayPositions[edge.from]
+                const toFallback = root.displayPositions[edge.to]
+
+                if ((!fromItem && !fromFallback) || (!toItem && !toFallback))
+                    continue
+
+                const fromX = fromItem ? fromItem.x : fromFallback.x
+                const fromY = fromItem ? fromItem.y : fromFallback.y
+                const fromWidth = fromItem ? fromItem.width : fromFallback.width
+                const fromHeight = fromItem ? fromItem.height : fromFallback.height
+                const toX = toItem ? toItem.x : toFallback.x
+                const toY = toItem ? toItem.y : toFallback.y
+                const toHeight = toItem ? toItem.height : toFallback.height
+
+                const x1 = root.worldToViewportX(fromX + fromWidth)
+                const y1 = root.worldToViewportY(fromY + fromHeight / 2)
+                const x2 = root.worldToViewportX(toX)
+                const y2 = root.worldToViewportY(toY + toHeight / 2)
+
+                // Curves outside the viewport never hit the backing image at all.
+                if (Math.max(x1, x2) < -margin
+                        || Math.min(x1, x2) > width + margin
+                        || Math.max(y1, y2) < -margin
+                        || Math.min(y1, y2) > height + margin)
+                    continue
+
+                const dx = Math.max(28, (x2 - x1) * 0.45)
+
+                // Canvas now lives in screen coordinates, so line width stays constant
+                // and does not need to be divided by zoom.
+                ctx.lineWidth = related ? 3.0 : 1.5
+                ctx.strokeStyle = related ? highlightColor : normalColor
+                ctx.globalAlpha = related ? 1.0 : (hasSelection ? 0.13 : 0.75)
+                ctx.beginPath()
+                ctx.moveTo(x1, y1)
+                ctx.bezierCurveTo(x1 + dx, y1,
+                                  x2 - dx, y2,
+                                  x2, y2)
+                ctx.stroke()
+            }
+
+            ctx.globalAlpha = 1.0
+        }
     }
 
     Flickable {
         id: flick
         anchors.fill: parent
+        z: 0
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         contentWidth: Math.max(width, root.graphWidth * root.zoom)
         contentHeight: Math.max(height, root.graphHeight * root.zoom)
+
+        onContentXChanged: edgeCanvas.requestPaint()
+        onContentYChanged: edgeCanvas.requestPaint()
 
         Item {
             id: world
@@ -237,61 +324,6 @@ Item {
             height: root.graphHeight
             scale: root.zoom
             transformOrigin: Item.TopLeft
-
-            Canvas {
-                id: edgeCanvas
-                anchors.fill: parent
-
-                onPaint: {
-                    const ctx = getContext("2d")
-                    ctx.clearRect(0, 0, width, height)
-
-                    const hasSelection = root.selectedName.length > 0
-                    const highlightColor = palette.highlight
-                    const normalColor = palette.mid
-
-                    for (let i = 0; i < root.edges.length; ++i) {
-                        const edge = root.edges[i]
-                        const related = root.edgeIsRelated(edge)
-                        const fromItem = root.nodeItems[edge.from]
-                        const toItem = root.nodeItems[edge.to]
-                        const fromFallback = root.displayPositions[edge.from]
-                        const toFallback = root.displayPositions[edge.to]
-
-                        if ((!fromItem && !fromFallback) || (!toItem && !toFallback))
-                            continue
-
-                        const fromY = fromItem
-                                      ? fromItem.y + fromItem.height / 2
-                                      : fromFallback.y + fromFallback.height / 2
-                        const toY = toItem
-                                    ? toItem.y + toItem.height / 2
-                                    : toFallback.y + toFallback.height / 2
-                        const x1 = edge.x1
-                        const x2 = edge.x2
-                        const dx = Math.max(40, (x2 - x1) * 0.45)
-
-                        ctx.lineWidth = (related ? 3.0 : 1.5) / root.zoom
-                        ctx.strokeStyle = related ? highlightColor : normalColor
-                        ctx.globalAlpha = related ? 1.0 : (hasSelection ? 0.13 : 0.75)
-                        ctx.beginPath()
-                        ctx.moveTo(x1, fromY)
-                        ctx.bezierCurveTo(x1 + dx, fromY,
-                                          x2 - dx, toY,
-                                          x2, toY)
-                        ctx.stroke()
-                    }
-                    ctx.globalAlpha = 1.0
-                }
-
-                Connections {
-                    target: root
-                    function onEdgesChanged() { root.scheduleEdgeFrames() }
-                    function onZoomChanged() { edgeCanvas.requestPaint() }
-                    function onRelatedIdsChanged() { edgeCanvas.requestPaint() }
-                    function onSelectedNameChanged() { edgeCanvas.requestPaint() }
-                }
-            }
 
             Repeater {
                 id: nodeRepeater
@@ -323,8 +355,8 @@ Item {
                     border.width: selected ? 3.0 : (related ? 2.0 : 1.0)
                     border.color: selected || related ? palette.highlight : palette.mid
 
-                    // Focus mode only changes vertical order. Keeping x static avoids
-                    // waking an animation that can never actually do useful work.
+                    // Focus mode only changes vertical order. Scene graph handles the
+                    // cards; the lightweight viewport canvas follows them at frame rate.
                     Behavior on y {
                         NumberAnimation {
                             duration: root.moveDuration
@@ -397,9 +429,18 @@ Item {
             onWheel: function(event) {
                 const factor = event.angleDelta.y > 0 ? 1.12 : 0.89
                 root.zoom = Math.max(0.18, Math.min(2.6, root.zoom * factor))
+                edgeCanvas.requestPaint()
                 event.accepted = true
             }
         }
+    }
+
+    Connections {
+        target: root
+        function onEdgesChanged() { root.scheduleEdgeFrames() }
+        function onZoomChanged() { edgeCanvas.requestPaint() }
+        function onRelatedIdsChanged() { edgeCanvas.requestPaint() }
+        function onSelectedNameChanged() { edgeCanvas.requestPaint() }
     }
 
     Row {
@@ -407,6 +448,7 @@ Item {
         anchors.bottom: parent.bottom
         anchors.margins: 12
         spacing: 6
+        z: 10
 
         ToolButton {
             text: "−"
