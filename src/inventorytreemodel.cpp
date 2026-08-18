@@ -8,6 +8,14 @@ InventoryTreeModel::InventoryTreeModel(InventoryDocument *document)
     : QAbstractListModel(document), m_document(document)
 {
     m_expanded.insert(QStringLiteral("group:all@"));
+
+    connect(m_document, &InventoryDocument::pingStateChanged, this, [this]() {
+        // Avoid rebuilding the entire tree for every host result during a bulk run.
+        // Once the run finishes, one final pingStateChanged reorders everything.
+        if (m_problemsFirst && !m_document->pingRunning())
+            rebuild();
+    });
+
     rebuild();
 }
 
@@ -87,6 +95,15 @@ void InventoryTreeModel::collapseAll()
     rebuild();
 }
 
+void InventoryTreeModel::setProblemsFirst(bool enabled)
+{
+    if (m_problemsFirst == enabled)
+        return;
+
+    m_problemsFirst = enabled;
+    rebuild();
+}
+
 void InventoryTreeModel::rebuild()
 {
     beginResetModel();
@@ -94,6 +111,20 @@ void InventoryTreeModel::rebuild()
     QSet<QString> path;
     appendGroup(QStringLiteral("all"), QString(), 0, path);
     endResetModel();
+}
+
+int InventoryTreeModel::hostProblemRank(const QString &hostName) const
+{
+    const auto it = m_document->m_pingResults.constFind(hostName);
+    if (it == m_document->m_pingResults.cend())
+        return 2;
+
+    const QString &state = it.value().state;
+    if (state == QStringLiteral("unreachable") || state == QStringLiteral("error"))
+        return 0;
+    if (state == QStringLiteral("failed"))
+        return 1;
+    return 2;
 }
 
 void InventoryTreeModel::appendGroup(const QString &groupName,
@@ -127,6 +158,12 @@ void InventoryTreeModel::appendGroup(const QString &groupName,
         hosts = group.hosts.values();
     }
     hosts.sort(Qt::CaseInsensitive);
+
+    if (m_problemsFirst) {
+        std::stable_sort(hosts.begin(), hosts.end(), [this](const QString &left, const QString &right) {
+            return hostProblemRank(left) < hostProblemRank(right);
+        });
+    }
 
     const QString expansionKey = QStringLiteral("group:%1@%2").arg(
         groupName,
