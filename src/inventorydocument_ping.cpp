@@ -291,8 +291,14 @@ void InventoryDocument::processPingLine(const QString &line)
         pingValue = object.value(QStringLiteral("ping")).toString();
     }
 
-    if (status == QStringLiteral("SUCCESS") && pingValue == QStringLiteral("pong")) {
-        setPingResult(hostName, QStringLiteral("reachable"), QStringLiteral("pong"), line);
+    // We invoke ansible.builtin.ping with its default data value. A SUCCESS result
+    // therefore means the connection/module execution worked and the semantic result
+    // is pong, even if a custom callback made the payload hard to JSON-decode.
+    if (status == QStringLiteral("SUCCESS")) {
+        setPingResult(hostName,
+                      QStringLiteral("reachable"),
+                      pingValue.isEmpty() ? QStringLiteral("pong") : pingValue,
+                      line);
         return;
     }
 
