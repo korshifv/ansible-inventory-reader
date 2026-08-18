@@ -13,6 +13,7 @@ Item {
     property string selectedType: ""
     property string selectedName: ""
     property color dangerColor: "#e05252"
+    property color warningColor: "#d69a3a"
 
     signal nodeSelected(string type, string name)
 
@@ -325,10 +326,14 @@ Item {
                     property var pingInfo: modelData.type === "host"
                                            ? (root.pingStates[modelData.name] || ({}))
                                            : ({})
-                    property bool pingBad: pingInfo.state === "unreachable"
-                                           || pingInfo.state === "failed"
-                                           || pingInfo.state === "error"
+                    property bool pingUnreachable: pingInfo.state === "unreachable"
+                                                   || pingInfo.state === "error"
+                    property bool pingFailed: pingInfo.state === "failed"
+                    property bool pingBad: pingUnreachable || pingFailed
                     property bool pingChecking: pingInfo.state === "checking"
+                    property color statusColor: pingUnreachable
+                                                ? root.dangerColor
+                                                : (pingFailed ? root.warningColor : palette.placeholderText)
                     property real focusScale: selected ? 1.02 : 1.0
 
                     x: displayPosition.x
@@ -342,12 +347,14 @@ Item {
                     opacity: !root.matches(modelData)
                              ? 0.10
                              : (hasSelection && !related ? 0.18 : 1.0)
-                    color: pingBad
+                    color: pingUnreachable
                            ? Qt.rgba(0.88, 0.22, 0.22, 0.13)
-                           : (modelData.type === "group" ? palette.alternateBase : palette.button)
+                           : (pingFailed
+                              ? Qt.rgba(0.84, 0.55, 0.20, 0.13)
+                              : (modelData.type === "group" ? palette.alternateBase : palette.button))
                     border.width: selected ? 3.0 : (related || pingBad ? 2.0 : 1.0)
                     border.color: pingBad
-                                  ? root.dangerColor
+                                  ? statusColor
                                   : (selected || related ? palette.highlight : palette.mid)
 
                     Behavior on y {
@@ -376,7 +383,7 @@ Item {
                         anchors.fill: parent
                         anchors.margins: 2
                         radius: Math.max(0, parent.radius - 2)
-                        color: nodeCard.pingBad ? root.dangerColor : palette.highlight
+                        color: nodeCard.pingBad ? nodeCard.statusColor : palette.highlight
                         opacity: nodeCard.pingBad
                                  ? 0.08
                                  : (nodeCard.selected ? 0.20 : (nodeCard.related ? 0.07 : 0.0))
@@ -398,7 +405,7 @@ Item {
                             width: parent.width
                             text: (modelData.type === "group" ? "▣  " : (nodeCard.pingChecking ? "◌  " : "●  "))
                                   + modelData.name
-                            color: nodeCard.pingBad ? root.dangerColor : palette.text
+                            color: nodeCard.pingBad ? nodeCard.statusColor : palette.text
                             font.weight: nodeCard.selected ? Font.Bold : Font.DemiBold
                             elide: Text.ElideRight
                         }
@@ -415,7 +422,7 @@ Item {
                                 return base
                             }
                             text: displayText
-                            color: nodeCard.pingBad ? root.dangerColor : palette.placeholderText
+                            color: nodeCard.pingBad ? nodeCard.statusColor : palette.placeholderText
                             font.pixelSize: 11
                             elide: Text.ElideRight
                         }
