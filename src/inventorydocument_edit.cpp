@@ -343,9 +343,14 @@ bool InventoryDocument::setNodeVarsYaml(const QString &type,
                                         const QString &yamlText)
 {
     try {
-        YAML::Node parsed = yamlText.trimmed().isEmpty()
-            ? YAML::Node(YAML::NodeType::Map)
-            : YAML::Load(yamlText.toStdString());
+        YAML::Node parsed;
+        if (yamlText.trimmed().isEmpty()) {
+            parsed = YAML::Node(YAML::NodeType::Map);
+        } else {
+            parsed = YAML::Load(yamlText.toStdString());
+            if (!parsed || parsed.IsNull())
+                parsed = YAML::Node(YAML::NodeType::Map);
+        }
 
         if (!parsed.IsMap()) {
             setError(QStringLiteral("Variables must be a YAML mapping (key: value)."));
