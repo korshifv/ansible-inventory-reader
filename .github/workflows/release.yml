@@ -6,17 +6,203 @@ on:
       - main
     paths:
       - CMakeLists.txt
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  ubuntu-deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build g++ dpkg-dev \
+            qt6-base-dev qt6-declarative-dev \
+            qml6-module-qtquick \
+            qml6-module-qtquick-controls \
+            qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-layouts \
+            qml6-module-qtquick-templates \
+            qml6-module-qtquick-window \
+            qml6-module-qtqml-workerscript \
+            libyaml-cpp-dev
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+
+      - name: Smoke test build
+        shell: bash
+        run: |
+          set -euo pipefail
+          QT_QPA_PLATFORM=offscreen ./build/ansible-inventory-studio >app.log 2>&1 &
+          pid=$!
+          sleep 2
+          if ! kill -0 "$pid" 2>/dev/null; then
+            cat app.log
+            wait "$pid" || true
+            exit 1
+          fi
+          kill "$pid"
+          wait "$pid" || true
+
+      - name: Build Ubuntu DEB
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -n1)"
+          mkdir -p dist
+          cpack --config build/CPackConfig.cmake -G DEB -B dist
+          package="$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$package"
+          sudo apt-get install -y "$package"
+          mv "$package" "dist/ansible-inventory-studio-${version}-ubuntu24.04-amd64.deb"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-ubuntu-deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  debian-deb-and-tar:
+    runs-on: ubuntu-24.04
+    container: debian:12
+    steps:
+      - name: Install container tooling and dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            git ca-certificates cmake ninja-build g++ dpkg-dev \
+            qt6-base-dev qt6-declarative-dev \
+            qml6-module-qtquick \
+            qml6-module-qtquick-controls \
+            qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-layouts \
+            qml6-module-qtquick-templates \
+            qml6-module-qtquick-window \
+            qml6-module-qtqml-workerscript \
+            libyaml-cpp-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+
+      - name: Smoke test build
+        shell: bash
+        run: |
+          set -euo pipefail
+          QT_QPA_PLATFORM=offscreen ./build/ansible-inventory-studio >app.log 2>&1 &
+          pid=$!
+          sleep 2
+          if ! kill -0 "$pid" 2>/dev/null; then
+            cat app.log
+            wait "$pid" || true
+            exit 1
+          fi
+          kill "$pid"
+          wait "$pid" || true
+
+      - name: Build Debian DEB and generic tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -n1)"
+          mkdir -p dist stage
+
+          cpack --config build/CPackConfig.cmake -G DEB -B dist
+          package="$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$package"
+          apt-get install -y "$package"
+          mv "$package" "dist/ansible-inventory-studio-${version}-debian12-amd64.deb"
+
+          cmake --install build --prefix "$PWD/stage/ansible-inventory-studio-${version}"
+          tar -C stage -czf "dist/ansible-inventory-studio-${version}-linux-x86_64.tar.gz" \
+            "ansible-inventory-studio-${version}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-debian-and-tar
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  fedora-rpm:
+    runs-on: ubuntu-24.04
+    container: fedora:42
+    steps:
+      - name: Install container tooling and dependencies
+        run: |
+          dnf install -y \
+            git ca-certificates gcc-c++ cmake ninja-build rpm-build \
+            qt6-qtbase-devel qt6-qtdeclarative-devel \
+            yaml-cpp-devel
+
+      - uses: actions/checkout@v4
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+
+      - name: Smoke test build
+        shell: bash
+        run: |
+          set -euo pipefail
+          QT_QPA_PLATFORM=offscreen ./build/ansible-inventory-studio >app.log 2>&1 &
+          pid=$!
+          sleep 2
+          if ! kill -0 "$pid" 2>/dev/null; then
+            cat app.log
+            wait "$pid" || true
+            exit 1
+          fi
+          kill "$pid"
+          wait "$pid" || true
+
+      - name: Build Fedora RPM
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -n1)"
+          mkdir -p dist
+          cpack --config build/CPackConfig.cmake -G RPM -B dist
+          package="$(find dist -maxdepth 1 -type f -name '*.rpm' -print -quit)"
+          test -n "$package"
+          dnf install -y "$package"
+          mv "$package" "dist/ansible-inventory-studio-${version}-fedora-x86_64.rpm"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-fedora-rpm
+          path: dist/*.rpm
+          if-no-files-found: error
+
   release:
+    needs:
+      - ubuntu-deb
+      - debian-deb-and-tar
+      - fedora-rpm
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
 
       - name: Read project version
         id: version
@@ -31,7 +217,13 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Create tag and GitHub Release
+      - name: Verify release assets
+        run: |
+          set -euo pipefail
+          ls -lah dist
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -ge 4
+
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -39,14 +231,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "$TAG already exists; nothing to release."
-            exit 0
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
           fi
 
-          git tag "$TAG" "$GITHUB_SHA"
-          git push origin "$TAG"
-          gh release create "$TAG" \
-            --verify-tag \
-            --title "$TAG" \
-            --generate-notes
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --verify-tag \
+              --title "$TAG" \
+              --generate-notes
+          fi
