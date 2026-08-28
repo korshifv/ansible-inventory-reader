@@ -94,6 +94,7 @@ private:
         QSet<QString> groups;
         bool explicitAll {false};
         QString varsOwner;
+        QString comment;
     };
 
     struct GroupRecord {
@@ -125,8 +126,14 @@ private:
     static void mergeYamlMap(YAML::Node &destination, const YAML::Node &source);
 
     YAML::Node serializeYaml() const;
+    QString serializeYamlText() const;
+    QString injectHostComments(const QString &yamlText) const;
     YAML::Node hostVarsForLocation(const HostRecord &host, const QString &location) const;
     QString canonicalHostOwner(const HostRecord &host) const;
+    QString sourceCommentAfterLine(int sourceLine) const;
+    static QString extractLeadingYamlComment(const QString &yamlText);
+    static QString formatHostEditorYaml(const HostRecord &host);
+    static QString emitYamlScalar(const QString &value);
     static YAML::Node emptyMap();
     static QString emitYaml(const YAML::Node &node);
 
@@ -162,6 +169,7 @@ private:
     QString m_filePath;
     bool m_modified {false};
     QString m_errorString;
+    QStringList m_sourceLines;
 
     QVariantList m_graphNodes;
     QVariantList m_graphEdges;

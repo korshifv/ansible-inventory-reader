@@ -3,6 +3,7 @@
 #include "inventorytreemodel.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QMap>
 #include <QPointF>
@@ -21,6 +22,14 @@ QString localPathFromUrl(const QUrl &url)
 QString yamlExceptionMessage(const std::exception &exception)
 {
     return QString::fromUtf8(exception.what());
+}
+
+int leadingSpaces(const QString &line)
+{
+    int count = 0;
+    while (count < line.size() && line.at(count) == QLatin1Char(' '))
+        ++count;
+    return count;
 }
 }
 
@@ -51,6 +60,7 @@ QStringList InventoryDocument::groupNames() const
 void InventoryDocument::newDocument()
 {
     clearData();
+    m_sourceLines.clear();
     m_filePath.clear();
     setError({});
     setModified(false);
@@ -66,15 +76,30 @@ bool InventoryDocument::openFile(const QUrl &url)
         return false;
     }
 
+    QFile input(path);
+    if (!input.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        setError(QStringLiteral("Cannot read %1: %2")
+                     .arg(QDir::toNativeSeparators(path), input.errorString()));
+        return false;
+    }
+
+    const QByteArray sourceBytes = input.readAll();
+    const QString sourceText = QString::fromUtf8(sourceBytes);
+
     try {
-        const YAML::Node root = YAML::LoadFile(path.toStdString());
+        const YAML::Node root = YAML::Load(std::string(sourceBytes.constData(),
+                                                       static_cast<std::size_t>(sourceBytes.size())));
         clearData();
+        m_sourceLines = sourceText.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
         if (!parseYaml(root)) {
+            m_sourceLines.clear();
             clearData();
             changed(false);
             return false;
         }
+        m_sourceLines.clear();
     } catch (const std::exception &exception) {
+        m_sourceLines.clear();
         clearData();
         changed(false);
         setError(QStringLiteral("Failed to parse %1: %2")
@@ -108,12 +133,9 @@ bool InventoryDocument::saveAs(const QUrl &url)
     }
 
     try {
-        YAML::Emitter emitter;
-        emitter.SetIndent(2);
-        emitter << serializeYaml();
-        if (!emitter.good()) {
-            setError(QStringLiteral("YAML emitter failed: %1")
-                         .arg(QString::fromStdString(emitter.GetLastError())));
+        const QString yamlText = serializeYamlText();
+        if (yamlText.isEmpty()) {
+            setError(QStringLiteral("YAML emitter failed."));
             return false;
         }
 
@@ -124,7 +146,7 @@ bool InventoryDocument::saveAs(const QUrl &url)
             return false;
         }
 
-        const QByteArray bytes(emitter.c_str(), static_cast<qsizetype>(emitter.size()));
+        const QByteArray bytes = yamlText.toUtf8();
         if (file.write(bytes) != bytes.size() || file.write("\n", 1) != 1) {
             setError(QStringLiteral("Failed while writing %1: %2")
                          .arg(QDir::toNativeSeparators(path), file.errorString()));
@@ -237,6 +259,13 @@ void InventoryDocument::parseGroupDefinition(const QString &name,
         for (auto it = node["hosts"].begin(); it != node["hosts"].end(); ++it) {
             const QString hostName = QString::fromStdString(it->first.as<std::string>());
             HostRecord &host = ensureHost(hostName);
+
+            if (host.comment.isEmpty()) {
+                const YAML::Mark mark = it->first.Mark();
+                if (!mark.is_null())
+                    host.comment = sourceCommentAfterLine(mark.line);
+            }
+
             if (it->second && !it->second.IsNull()) {
                 if (!it->second.IsMap())
                     throw std::runtime_error(QStringLiteral("Host '%1' variables must be a mapping.").arg(hostName).toStdString());
@@ -346,6 +375,111 @@ YAML::Node InventoryDocument::serializeYaml() const
     return root;
 }
 
+QString InventoryDocument::serializeYamlText() const
+{
+    YAML::Emitter emitter;
+    emitter.SetIndent(2);
+    emitter << serializeYaml();
+    if (!emitter.good())
+        throw std::runtime_error(emitter.GetLastError());
+    return injectHostComments(QString::fromUtf8(emitter.c_str()));
+}
+
+QString InventoryDocument::injectHostComments(const QString &yamlText) const
+{
+    QStringList lines = yamlText.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+
+    QHash<QString, QString> groupKeys;
+    for (const QString &groupName : sortedGroupNames(true))
+        groupKeys.insert(emitYamlScalar(groupName), groupName);
+
+    QHash<QString, QString> hostKeys;
+    for (const QString &hostName : sortedHostNames())
+        hostKeys.insert(emitYamlScalar(hostName), hostName);
+
+    QString currentGroup;
+    bool inHosts = false;
+
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString trimmed = lines.at(i).trimmed();
+        if (trimmed.isEmpty())
+            continue;
+
+        const int indent = leadingSpaces(lines.at(i));
+
+        if (indent == 0) {
+            currentGroup.clear();
+            inHosts = false;
+            for (auto it = groupKeys.cbegin(); it != groupKeys.cend(); ++it) {
+                if (trimmed == it.key() + QLatin1Char(':')) {
+                    currentGroup = it.value();
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if (currentGroup.isEmpty())
+            continue;
+
+        if (indent == 2) {
+            inHosts = trimmed == QStringLiteral("hosts:");
+            continue;
+        }
+
+        if (!inHosts)
+            continue;
+        if (indent <= 2) {
+            inHosts = false;
+            continue;
+        }
+        if (indent != 4)
+            continue;
+
+        QString hostName;
+        QString hostKey;
+        for (auto it = hostKeys.cbegin(); it != hostKeys.cend(); ++it) {
+            const QString prefix = it.key() + QLatin1Char(':');
+            if (trimmed == prefix || trimmed.startsWith(prefix + QLatin1Char(' '))) {
+                hostName = it.value();
+                hostKey = it.key();
+                break;
+            }
+        }
+
+        if (hostName.isEmpty())
+            continue;
+
+        const auto hostIt = m_hosts.constFind(hostName);
+        if (hostIt == m_hosts.cend() || hostIt->comment.trimmed().isEmpty())
+            continue;
+        if (canonicalHostOwner(hostIt.value()) != currentGroup)
+            continue;
+
+        const bool inlineEmptyMap = trimmed == hostKey + QStringLiteral(": {}");
+        const QString childIndent(indent + 2, QLatin1Char(' '));
+
+        if (inlineEmptyMap)
+            lines[i] = QString(indent, QLatin1Char(' ')) + hostKey + QLatin1Char(':');
+
+        QStringList commentLines = hostIt->comment.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+        int insertAt = i + 1;
+        for (const QString &commentLine : commentLines) {
+            const QString text = commentLine.trimmed();
+            lines.insert(insertAt++, childIndent + (text.isEmpty()
+                                                    ? QStringLiteral("#")
+                                                    : QStringLiteral("# ") + text));
+        }
+
+        if (inlineEmptyMap)
+            lines.insert(insertAt++, childIndent + QStringLiteral("{}"));
+
+        i = insertAt - 1;
+    }
+
+    return lines.join(QLatin1Char('\n'));
+}
+
 YAML::Node InventoryDocument::hostVarsForLocation(const HostRecord &host, const QString &location) const
 {
     if (canonicalHostOwner(host) == location && host.vars && host.vars.IsMap() && host.vars.size() > 0)
@@ -368,6 +502,104 @@ QString InventoryDocument::canonicalHostOwner(const HostRecord &host) const
     QStringList groups = host.groups.values();
     groups.sort(Qt::CaseInsensitive);
     return groups.constFirst();
+}
+
+QString InventoryDocument::sourceCommentAfterLine(int sourceLine) const
+{
+    if (sourceLine < 0 || sourceLine >= m_sourceLines.size())
+        return {};
+
+    const int baseIndent = leadingSpaces(m_sourceLines.at(sourceLine));
+    QStringList comments;
+    bool foundComment = false;
+
+    for (int i = sourceLine + 1; i < m_sourceLines.size(); ++i) {
+        QString line = m_sourceLines.at(i);
+        if (line.endsWith(QLatin1Char('\r')))
+            line.chop(1);
+
+        const QString trimmed = line.trimmed();
+        if (trimmed.isEmpty()) {
+            if (foundComment)
+                comments.append(QString());
+            continue;
+        }
+
+        const int indent = leadingSpaces(line);
+        if (indent <= baseIndent)
+            break;
+        if (!trimmed.startsWith(QLatin1Char('#')))
+            break;
+
+        foundComment = true;
+        QString text = trimmed.mid(1);
+        if (text.startsWith(QLatin1Char(' ')))
+            text.remove(0, 1);
+        comments.append(text);
+    }
+
+    while (!comments.isEmpty() && comments.constLast().isEmpty())
+        comments.removeLast();
+    return comments.join(QLatin1Char('\n')).trimmed();
+}
+
+QString InventoryDocument::extractLeadingYamlComment(const QString &yamlText)
+{
+    const QStringList lines = yamlText.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    QStringList comments;
+    bool foundComment = false;
+
+    for (QString line : lines) {
+        if (line.endsWith(QLatin1Char('\r')))
+            line.chop(1);
+        const QString trimmed = line.trimmed();
+
+        if (trimmed.isEmpty()) {
+            if (foundComment)
+                comments.append(QString());
+            continue;
+        }
+
+        if (!trimmed.startsWith(QLatin1Char('#')))
+            break;
+
+        foundComment = true;
+        QString text = trimmed.mid(1);
+        if (text.startsWith(QLatin1Char(' ')))
+            text.remove(0, 1);
+        comments.append(text);
+    }
+
+    while (!comments.isEmpty() && comments.constLast().isEmpty())
+        comments.removeLast();
+    return comments.join(QLatin1Char('\n')).trimmed();
+}
+
+QString InventoryDocument::formatHostEditorYaml(const HostRecord &host)
+{
+    QStringList result;
+    if (!host.comment.trimmed().isEmpty()) {
+        const QStringList comments = host.comment.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+        for (const QString &comment : comments) {
+            const QString text = comment.trimmed();
+            result.append(text.isEmpty() ? QStringLiteral("#") : QStringLiteral("# ") + text);
+        }
+    }
+
+    const QString vars = emitYaml(host.vars);
+    if (!vars.isEmpty())
+        result.append(vars);
+
+    return result.join(QLatin1Char('\n'));
+}
+
+QString InventoryDocument::emitYamlScalar(const QString &value)
+{
+    YAML::Emitter emitter;
+    emitter << value.toStdString();
+    if (!emitter.good())
+        return value;
+    return QString::fromUtf8(emitter.c_str());
 }
 
 YAML::Node InventoryDocument::emptyMap()
