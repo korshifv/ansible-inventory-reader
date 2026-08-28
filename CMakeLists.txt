@@ -13,6 +13,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Qt6 6.4 REQUIRED COMPONENTS Quick QuickControls2)
 find_package(yaml-cpp CONFIG REQUIRED)
 
+if(TARGET yaml-cpp::yaml-cpp)
+    set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+    set(YAML_CPP_TARGET yaml-cpp)
+else()
+    message(FATAL_ERROR "yaml-cpp was found, but no supported CMake target was exported")
+endif()
+
 qt_standard_project_setup()
 
 qt_add_executable(ansible-inventory-studio
@@ -38,7 +46,7 @@ qt_add_qml_module(ansible-inventory-studio
 target_link_libraries(ansible-inventory-studio PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
-    yaml-cpp::yaml-cpp
+    ${YAML_CPP_TARGET}
 )
 
 target_compile_options(ansible-inventory-studio PRIVATE
