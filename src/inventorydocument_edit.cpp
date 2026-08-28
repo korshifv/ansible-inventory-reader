@@ -313,7 +313,8 @@ QVariantMap InventoryDocument::nodeDetails(const QString &type, const QString &n
         QStringList groups = it->groups.values();
         groups.sort(Qt::CaseInsensitive);
         result.insert(QStringLiteral("groups"), groups);
-        result.insert(QStringLiteral("varsYaml"), emitYaml(it->vars));
+        result.insert(QStringLiteral("varsYaml"), formatHostEditorYaml(it.value()));
+        result.insert(QStringLiteral("comment"), it->comment);
         result.insert(QStringLiteral("ansibleHost"),
                       it->vars["ansible_host"]
                           ? QString::fromStdString(it->vars["ansible_host"].as<std::string>())
@@ -353,6 +354,7 @@ bool InventoryDocument::setNodeVarsYaml(const QString &type,
 
         if (type == QStringLiteral("host") && m_hosts.contains(name)) {
             m_hosts[name].vars = YAML::Clone(parsed);
+            m_hosts[name].comment = extractLeadingYamlComment(yamlText);
             if (m_hosts[name].varsOwner.isEmpty())
                 m_hosts[name].varsOwner = canonicalHostOwner(m_hosts[name]);
         } else if (type == QStringLiteral("group") && m_groups.contains(name)) {
@@ -374,7 +376,7 @@ bool InventoryDocument::setNodeVarsYaml(const QString &type,
 QString InventoryDocument::nodeVarsYaml(const QString &type, const QString &name) const
 {
     if (type == QStringLiteral("host") && m_hosts.contains(name))
-        return emitYaml(m_hosts[name].vars);
+        return formatHostEditorYaml(m_hosts[name]);
     if (type == QStringLiteral("group") && m_groups.contains(name))
         return emitYaml(m_groups[name].vars);
     return {};
