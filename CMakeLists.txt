@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(ansible-inventory-studio
-    VERSION 0.2.0
+    VERSION 0.2.1
     DESCRIPTION "Native Qt/QML editor and graph viewer for Ansible YAML inventories"
     LANGUAGES CXX
 )
@@ -49,3 +49,28 @@ install(TARGETS ansible-inventory-studio
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
+
+set(CPACK_PACKAGE_NAME "ansible-inventory-studio")
+set(CPACK_PACKAGE_VENDOR "Korshi")
+set(CPACK_PACKAGE_CONTACT "Korshi")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Qt editor and graph viewer for Ansible YAML inventories")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/korshifv/ansible-inventory-reader")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Korshi")
+set(CPACK_DEBIAN_PACKAGE_SECTION "admin")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS
+    "qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs, qml6-module-qtquick-layouts, qml6-module-qtquick-templates, qml6-module-qtquick-window, qml6-module-qtqml-workerscript"
+)
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+
+set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-only")
+set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
+set(CPACK_RPM_PACKAGE_REQUIRES "qt6-qtdeclarative >= 6.4, yaml-cpp")
+set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+
+include(CPack)
