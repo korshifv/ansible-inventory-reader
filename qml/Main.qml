@@ -35,6 +35,43 @@ ApplicationWindow {
         refreshDetails()
     }
 
+    function stripLeadingHostComments(yamlText) {
+        const lines = (yamlText || "").split("\n")
+        let index = 0
+        while (index < lines.length) {
+            const trimmed = lines[index].trim()
+            if (trimmed.length === 0 || trimmed.indexOf("#") === 0) {
+                ++index
+                continue
+            }
+            break
+        }
+        return lines.slice(index).join("\n")
+    }
+
+    function composeHostEditorYaml(commentText, varsText) {
+        const vars = varsText || ""
+        const comment = (commentText || "").replace(/\r/g, "")
+        if (comment.trim().length === 0)
+            return vars
+
+        const lines = comment.split("\n")
+        const encoded = []
+        for (let i = 0; i < lines.length; ++i) {
+            encoded.push(lines[i].length > 0 ? "# " + lines[i] : "#")
+        }
+
+        return encoded.join("\n") + (vars.trim().length > 0 ? "\n" + vars : "")
+    }
+
+    function applyInspectorVariables() {
+        const yamlText = selectedType === "host"
+                       ? composeHostEditorYaml(commentArea.text, varsArea.text)
+                       : varsArea.text
+        if (inventory.setNodeVarsYaml(selectedType, selectedName, yamlText))
+            refreshDetails()
+    }
+
     function refreshDetails() {
         if (selectedType.length === 0 || selectedName.length === 0) {
             selectedDetails = ({})
@@ -42,7 +79,13 @@ ApplicationWindow {
         }
         selectedDetails = inventory.nodeDetails(selectedType, selectedName)
         nameField.text = selectedName
-        varsArea.text = selectedDetails.varsYaml || ""
+        if (selectedType === "host") {
+            commentArea.text = selectedDetails.comment || ""
+            varsArea.text = stripLeadingHostComments(selectedDetails.varsYaml || "")
+        } else {
+            commentArea.text = ""
+            varsArea.text = selectedDetails.varsYaml || ""
+        }
     }
 
     function selectedGroupContext() {
@@ -677,6 +720,41 @@ ApplicationWindow {
                         }
 
                         Label {
+                            visible: selectedType === "host"
+                            text: "Comment"
+                            font.weight: Font.DemiBold
+                            topPadding: 4
+                        }
+
+                        TextArea {
+                            id: commentArea
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 110
+                            visible: selectedType === "host"
+                            wrapMode: TextEdit.WordWrap
+                            placeholderText: "Human-readable note about this host. No # prefix needed."
+                            background: Rectangle {
+                                color: palette.base
+                                border.color: palette.mid
+                                radius: 6
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: selectedType === "host"
+                            Button {
+                                text: "Apply comment"
+                                onClicked: applyInspectorVariables()
+                            }
+                            Item { Layout.fillWidth: true }
+                            Label {
+                                text: "Saved as YAML comments"
+                                color: palette.placeholderText
+                            }
+                        }
+
+                        Label {
                             text: "Variables (YAML mapping)"
                             font.weight: Font.DemiBold
                             topPadding: 4
@@ -685,7 +763,7 @@ ApplicationWindow {
                         TextArea {
                             id: varsArea
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 260
+                            Layout.preferredHeight: 230
                             wrapMode: TextEdit.NoWrap
                             font.family: "monospace"
                             placeholderText: "ansible_host: 10.0.0.10\nansible_user: root"
@@ -700,10 +778,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Button {
                                 text: "Apply variables"
-                                onClicked: {
-                                    if (inventory.setNodeVarsYaml(selectedType, selectedName, varsArea.text))
-                                        refreshDetails()
-                                }
+                                onClicked: applyInspectorVariables()
                             }
                             Item { Layout.fillWidth: true }
                             Label {
