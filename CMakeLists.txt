@@ -58,7 +58,7 @@ install(TARGETS ansible-inventory-studio
     RUNTIME DESTINATION bin
 )
 
-# Shared package metadata for the distro-specific release jobs.
+# Package metadata shared by all release builders.
 set(CPACK_PACKAGE_NAME "ansible-inventory-studio")
 set(CPACK_PACKAGE_VENDOR "Korshi")
 set(CPACK_PACKAGE_CONTACT "Korshi")
