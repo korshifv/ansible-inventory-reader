@@ -61,7 +61,7 @@ jobs:
           cpack --config build/CPackConfig.cmake -G DEB -B dist
           package="$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
           test -n "$package"
-          sudo apt-get install -y "$package"
+          sudo apt-get install -y "./$package"
           mv "$package" "dist/ansible-inventory-studio-${version}-ubuntu24.04-amd64.deb"
 
       - uses: actions/upload-artifact@v4
@@ -121,7 +121,7 @@ jobs:
           cpack --config build/CPackConfig.cmake -G DEB -B dist
           package="$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
           test -n "$package"
-          apt-get install -y "$package"
+          apt-get install -y "./$package"
           mv "$package" "dist/ansible-inventory-studio-${version}-debian12-amd64.deb"
 
           cmake --install build --prefix "$PWD/stage/ansible-inventory-studio-${version}"
