@@ -21,14 +21,83 @@ Item {
     property real zoom: 1.0
     property int moveDuration: 210
     property int fadeDuration: 140
-    property int edgeFrameInterval: edges.length > 300 ? 24 : 16
-    property var relatedIds: buildRelationSet(selectedType, selectedName, edges)
-    property var displayPositions: buildDisplayPositions(nodes, relatedIds, selectedName,
+    property bool draggingGroup: false
+    property var excludedGroupNames: inventory.excludedGroups
+    property var hiddenNodeIds: buildHiddenNodeSet(nodes, edges, excludedGroupNames)
+    property var visibleNodes: filterVisibleNodes(nodes, hiddenNodeIds)
+    property var visibleEdges: filterVisibleEdges(edges, hiddenNodeIds)
+    property string activeSelectedName: nodeIsVisible(selectedType, selectedName, hiddenNodeIds)
+                                        ? selectedName : ""
+    property string activeSelectedType: activeSelectedName.length > 0 ? selectedType : ""
+    property int edgeFrameInterval: visibleEdges.length > 300 ? 24 : 16
+    property var relatedIds: buildRelationSet(activeSelectedType, activeSelectedName, visibleEdges)
+    property var displayPositions: buildDisplayPositions(visibleNodes, relatedIds, activeSelectedName,
                                                          pingStates, problemsFirst)
     property var nodeItems: ({})
 
     function nodeId(type, name) {
         return type + ":" + name
+    }
+
+    function buildHiddenNodeSet(graphNodes, graphEdges, excludedGroups) {
+        const hidden = ({})
+        const children = ({})
+
+        for (let i = 0; i < graphEdges.length; ++i) {
+            const edge = graphEdges[i]
+            if (!children[edge.from])
+                children[edge.from] = []
+            children[edge.from].push(edge.to)
+        }
+
+        const queue = []
+        for (let i = 0; i < excludedGroups.length; ++i) {
+            const id = nodeId("group", excludedGroups[i])
+            if (!hidden[id]) {
+                hidden[id] = true
+                queue.push(id)
+            }
+        }
+
+        let cursor = 0
+        while (cursor < queue.length) {
+            const current = queue[cursor++]
+            const descendants = children[current] || []
+            for (let i = 0; i < descendants.length; ++i) {
+                const child = descendants[i]
+                if (!hidden[child]) {
+                    hidden[child] = true
+                    queue.push(child)
+                }
+            }
+        }
+
+        return hidden
+    }
+
+    function filterVisibleNodes(graphNodes, hidden) {
+        const result = []
+        for (let i = 0; i < graphNodes.length; ++i) {
+            if (!hidden[graphNodes[i].id])
+                result.push(graphNodes[i])
+        }
+        return result
+    }
+
+    function filterVisibleEdges(graphEdges, hidden) {
+        const result = []
+        for (let i = 0; i < graphEdges.length; ++i) {
+            const edge = graphEdges[i]
+            if (!hidden[edge.from] && !hidden[edge.to])
+                result.push(edge)
+        }
+        return result
+    }
+
+    function nodeIsVisible(type, name, hidden) {
+        if (type.length === 0 || name.length === 0)
+            return false
+        return hidden[nodeId(type, name)] !== true
     }
 
     function buildRelationSet(type, name, graphEdges) {
@@ -207,13 +276,13 @@ Item {
     }
 
     function isRelated(type, name) {
-        if (selectedName.length === 0)
+        if (activeSelectedName.length === 0)
             return false
         return relatedIds[nodeId(type, name)] === true
     }
 
     function edgeIsRelated(edge) {
-        if (selectedName.length === 0)
+        if (activeSelectedName.length === 0)
             return false
         return relatedIds[edge.from] === true && relatedIds[edge.to] === true
     }
@@ -271,14 +340,14 @@ Item {
             const ctx = getContext("2d")
             ctx.clearRect(0, 0, width, height)
 
-            const hasSelection = root.selectedName.length > 0
+            const hasSelection = root.activeSelectedName.length > 0
             const motionActive = edgeFrameTimer.running
             const highlightColor = palette.highlight
             const normalColor = palette.mid
             const margin = 100
 
-            for (let i = 0; i < root.edges.length; ++i) {
-                const edge = root.edges[i]
+            for (let i = 0; i < root.visibleEdges.length; ++i) {
+                const edge = root.visibleEdges[i]
                 const related = root.edgeIsRelated(edge)
 
                 if (motionActive && hasSelection && !related)
@@ -346,7 +415,7 @@ Item {
 
             Repeater {
                 id: nodeRepeater
-                model: root.nodes
+                model: root.visibleNodes
 
                 delegate: Rectangle {
                     id: nodeCard
@@ -355,7 +424,7 @@ Item {
                     property bool selected: root.selectedType === modelData.type
                                             && root.selectedName === modelData.name
                     property bool related: root.isRelated(modelData.type, modelData.name)
-                    property bool hasSelection: root.selectedName.length > 0
+                    property bool hasSelection: root.activeSelectedName.length > 0
                     property var displayPosition: root.positionFor(modelData)
                     property real layoutX: displayPosition.x
                     property real layoutY: displayPosition.y
@@ -393,6 +462,12 @@ Item {
                                   ? statusColor
                                   : (selected || related ? palette.highlight : palette.mid)
 
+                    Drag.active: groupDrag.active
+                    Drag.source: nodeCard
+                    Drag.hotSpot.x: width / 2
+                    Drag.hotSpot.y: height / 2
+                    Drag.supportedActions: Qt.CopyAction
+
                     Behavior on layoutY {
                         NumberAnimation {
                             duration: root.moveDuration
@@ -428,7 +503,12 @@ Item {
 
                     Column {
                         anchors.fill: parent
-                        anchors.margins: Math.max(4, Math.round(9 * root.zoom))
+                        anchors.leftMargin: Math.max(4, Math.round(9 * root.zoom))
+                        anchors.topMargin: Math.max(4, Math.round(9 * root.zoom))
+                        anchors.bottomMargin: Math.max(4, Math.round(9 * root.zoom))
+                        anchors.rightMargin: modelData.type === "group" && modelData.name !== "all"
+                                             ? Math.max(30, Math.round(34 * root.zoom))
+                                             : Math.max(4, Math.round(9 * root.zoom))
                         spacing: Math.max(1, Math.round(2 * root.zoom))
 
                         Text {
@@ -461,8 +541,30 @@ Item {
                         }
                     }
 
+                    ToolButton {
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: Math.max(2, Math.round(4 * root.zoom))
+                        width: Math.max(24, Math.round(28 * root.zoom))
+                        height: width
+                        visible: modelData.type === "group"
+                                 && modelData.name !== "all"
+                                 && root.zoom >= 0.45
+                        text: "×"
+                        onClicked: inventory.setGroupExcluded(modelData.name, true)
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Exclude this group from graph and ping"
+                    }
+
                     TapHandler {
                         onTapped: root.nodeSelected(modelData.type, modelData.name)
+                    }
+
+                    DragHandler {
+                        id: groupDrag
+                        target: null
+                        enabled: modelData.type === "group" && modelData.name !== "all"
+                        onActiveChanged: root.draggingGroup = active
                     }
                 }
             }
@@ -481,10 +583,102 @@ Item {
 
     Connections {
         target: root
-        function onEdgesChanged() { root.scheduleEdgeFrames() }
+        function onVisibleEdgesChanged() { root.scheduleEdgeFrames() }
         function onZoomChanged() { edgeCanvas.requestPaint() }
         function onRelatedIdsChanged() { edgeCanvas.requestPaint() }
-        function onSelectedNameChanged() { edgeCanvas.requestPaint() }
+        function onActiveSelectedNameChanged() { edgeCanvas.requestPaint() }
+    }
+
+    Rectangle {
+        id: exclusionDropZone
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 12
+        width: Math.min(340, Math.max(220, root.width - 24))
+        height: exclusionColumn.implicitHeight + 20
+        radius: 8
+        z: 20
+        visible: root.draggingGroup || inventory.excludedGroups.length > 0
+        color: exclusionDrop.containsDrag ? palette.highlight : palette.window
+        opacity: exclusionDrop.containsDrag ? 0.96 : 0.92
+        border.width: exclusionDrop.containsDrag ? 2 : 1
+        border.color: exclusionDrop.containsDrag ? palette.highlightedText : palette.mid
+
+        DropArea {
+            id: exclusionDrop
+            anchors.fill: parent
+            onDropped: function(drop) {
+                if (drop.source && drop.source.modelData
+                        && drop.source.modelData.type === "group"
+                        && drop.source.modelData.name !== "all") {
+                    inventory.setGroupExcluded(drop.source.modelData.name, true)
+                    drop.acceptProposedAction()
+                }
+                root.draggingGroup = false
+            }
+        }
+
+        Column {
+            id: exclusionColumn
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 10
+            spacing: 5
+
+            Text {
+                width: parent.width
+                text: exclusionDrop.containsDrag
+                      ? "Drop group here to exclude"
+                      : "Excluded from graph + ping"
+                color: exclusionDrop.containsDrag ? palette.highlightedText : palette.text
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
+
+            Text {
+                width: parent.width
+                visible: root.draggingGroup && inventory.excludedGroups.length === 0
+                text: "The group and its whole subtree will be skipped."
+                color: exclusionDrop.containsDrag ? palette.highlightedText : palette.placeholderText
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+
+            Repeater {
+                model: inventory.excludedGroups
+
+                delegate: Row {
+                    required property string modelData
+                    width: exclusionColumn.width
+                    spacing: 5
+
+                    Text {
+                        width: Math.max(0, parent.width - restoreButton.width - parent.spacing)
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "▣  " + modelData
+                        color: exclusionDrop.containsDrag ? palette.highlightedText : palette.text
+                        elide: Text.ElideRight
+                    }
+
+                    ToolButton {
+                        id: restoreButton
+                        width: 28
+                        height: 28
+                        text: "↶"
+                        onClicked: inventory.setGroupExcluded(modelData, false)
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Restore group"
+                    }
+                }
+            }
+
+            ToolButton {
+                visible: inventory.excludedGroups.length > 1
+                text: "Restore all"
+                onClicked: inventory.clearExcludedGroups()
+            }
+        }
     }
 
     Row {
