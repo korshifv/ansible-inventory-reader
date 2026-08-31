@@ -28,6 +28,7 @@ class InventoryDocument final : public QObject
     Q_PROPERTY(qreal graphWidth READ graphWidth NOTIFY graphChanged)
     Q_PROPERTY(qreal graphHeight READ graphHeight NOTIFY graphChanged)
     Q_PROPERTY(QStringList groupNames READ groupNames NOTIFY structureChanged)
+    Q_PROPERTY(QStringList excludedGroups READ excludedGroups NOTIFY exclusionsChanged)
     Q_PROPERTY(QVariantMap pingStates READ pingStates NOTIFY pingStateChanged)
     Q_PROPERTY(bool pingRunning READ pingRunning NOTIFY pingStateChanged)
     Q_PROPERTY(int pingCompleted READ pingCompleted NOTIFY pingStateChanged)
@@ -45,6 +46,7 @@ public:
     qreal graphWidth() const;
     qreal graphHeight() const;
     QStringList groupNames() const;
+    QStringList excludedGroups() const;
     QVariantMap pingStates() const;
     bool pingRunning() const;
     int pingCompleted() const;
@@ -75,6 +77,11 @@ public:
     Q_INVOKABLE bool setNodeVarsYaml(const QString &type, const QString &name, const QString &yamlText);
     Q_INVOKABLE QString nodeVarsYaml(const QString &type, const QString &name) const;
 
+    Q_INVOKABLE bool setGroupExcluded(const QString &groupName, bool excluded = true);
+    Q_INVOKABLE bool isGroupExcluded(const QString &groupName) const;
+    Q_INVOKABLE bool isHostExcluded(const QString &hostName) const;
+    Q_INVOKABLE void clearExcludedGroups();
+
     Q_INVOKABLE bool pingAll();
     Q_INVOKABLE bool pingHost(const QString &hostName);
     Q_INVOKABLE void cancelPing();
@@ -85,6 +92,7 @@ signals:
     void errorStringChanged();
     void structureChanged();
     void graphChanged();
+    void exclusionsChanged();
     void pingStateChanged();
 
 private:
@@ -141,6 +149,13 @@ private:
     bool groupReachable(const QString &from, const QString &target, QSet<QString> &seen) const;
     bool validateGroupGraph();
 
+    QSet<QString> effectiveExcludedGroups() const;
+    QSet<QString> excludedHostSet() const;
+    QStringList nonExcludedHostNames() const;
+    QString excludedPingPattern() const;
+    bool pingAllUnfiltered();
+    bool pingHostUnfiltered(const QString &hostName);
+
     bool startPingRun(const QString &pattern, const QStringList &hosts);
     QString pingInventoryPath();
     QString pingTargetForHost(const HostRecord &host) const;
@@ -164,6 +179,7 @@ private:
 
     QHash<QString, GroupRecord> m_groups;
     QHash<QString, HostRecord> m_hosts;
+    QSet<QString> m_excludedGroups;
     std::unique_ptr<InventoryTreeModel> m_treeModel;
 
     QString m_filePath;
