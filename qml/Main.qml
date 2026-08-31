@@ -732,7 +732,7 @@ ApplicationWindow {
                             Layout.preferredHeight: 110
                             visible: selectedType === "host"
                             wrapMode: TextEdit.WordWrap
-                            placeholderText: "Human-readable note about this host. No # prefix needed."
+                            placeholderText: "Human-readable note about this host."
                             background: Rectangle {
                                 color: palette.base
                                 border.color: palette.mid
