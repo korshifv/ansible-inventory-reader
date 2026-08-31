@@ -2,6 +2,16 @@
 
 #include <algorithm>
 
+namespace {
+bool rejectExclusionChangeWhilePingRuns(InventoryDocument *document)
+{
+    if (!document->pingRunning())
+        return false;
+
+    return true;
+}
+}
+
 QStringList InventoryDocument::excludedGroups() const
 {
     QStringList names;
@@ -14,13 +24,32 @@ QStringList InventoryDocument::excludedGroups() const
     return names;
 }
 
+QStringList InventoryDocument::excludedHosts() const
+{
+    QStringList names;
+    names.reserve(m_excludedHosts.size());
+    for (const QString &name : m_excludedHosts) {
+        if (m_hosts.contains(name))
+            names.append(name);
+    }
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
+
 bool InventoryDocument::setGroupExcluded(const QString &rawGroupName, bool excluded)
 {
+    if (rejectExclusionChangeWhilePingRuns(this)) {
+        setError(QStringLiteral("Cannot change exclusions while Ansible ping is running."));
+        return false;
+    }
+
     const QString groupName = rawGroupName.trimmed();
 
     if (!excluded) {
         if (!m_excludedGroups.remove(groupName))
             return true;
+        setError({});
+        rebuildGraph();
         emit exclusionsChanged();
         return true;
     }
@@ -30,12 +59,48 @@ bool InventoryDocument::setGroupExcluded(const QString &rawGroupName, bool exclu
         return false;
     }
 
-    // Do not create a redundant exclusion below an already excluded ancestor.
+    // Do not create a redundant direct exclusion below an already excluded ancestor.
     if (isGroupExcluded(groupName))
         return true;
 
     m_excludedGroups.insert(groupName);
     setError({});
+    rebuildGraph();
+    emit exclusionsChanged();
+    return true;
+}
+
+bool InventoryDocument::setHostExcluded(const QString &rawHostName, bool excluded)
+{
+    if (rejectExclusionChangeWhilePingRuns(this)) {
+        setError(QStringLiteral("Cannot change exclusions while Ansible ping is running."));
+        return false;
+    }
+
+    const QString hostName = rawHostName.trimmed();
+
+    if (!excluded) {
+        if (!m_excludedHosts.remove(hostName))
+            return true;
+        setError({});
+        rebuildGraph();
+        emit exclusionsChanged();
+        return true;
+    }
+
+    if (hostName.isEmpty() || !m_hosts.contains(hostName)) {
+        setError(QStringLiteral("Choose an existing host to exclude."));
+        return false;
+    }
+
+    if (isHostExcluded(hostName))
+        return true;
+
+    m_excludedHosts.insert(hostName);
+    m_pingResults.remove(hostName);
+    setError({});
+    rebuildGraph();
+    emit pingStateChanged();
     emit exclusionsChanged();
     return true;
 }
@@ -52,9 +117,44 @@ bool InventoryDocument::isHostExcluded(const QString &hostName) const
 
 void InventoryDocument::clearExcludedGroups()
 {
+    if (m_pingRunning) {
+        setError(QStringLiteral("Cannot change exclusions while Ansible ping is running."));
+        return;
+    }
     if (m_excludedGroups.isEmpty())
         return;
     m_excludedGroups.clear();
+    setError({});
+    rebuildGraph();
+    emit exclusionsChanged();
+}
+
+void InventoryDocument::clearExcludedHosts()
+{
+    if (m_pingRunning) {
+        setError(QStringLiteral("Cannot change exclusions while Ansible ping is running."));
+        return;
+    }
+    if (m_excludedHosts.isEmpty())
+        return;
+    m_excludedHosts.clear();
+    setError({});
+    rebuildGraph();
+    emit exclusionsChanged();
+}
+
+void InventoryDocument::clearExclusions()
+{
+    if (m_pingRunning) {
+        setError(QStringLiteral("Cannot change exclusions while Ansible ping is running."));
+        return;
+    }
+    if (m_excludedGroups.isEmpty() && m_excludedHosts.isEmpty())
+        return;
+    m_excludedGroups.clear();
+    m_excludedHosts.clear();
+    setError({});
+    rebuildGraph();
     emit exclusionsChanged();
 }
 
@@ -82,8 +182,13 @@ QSet<QString> InventoryDocument::effectiveExcludedGroups() const
 QSet<QString> InventoryDocument::excludedHostSet() const
 {
     QSet<QString> hosts;
-    const QSet<QString> groups = effectiveExcludedGroups();
 
+    for (const QString &hostName : m_excludedHosts) {
+        if (m_hosts.contains(hostName))
+            hosts.insert(hostName);
+    }
+
+    const QSet<QString> groups = effectiveExcludedGroups();
     for (const QString &groupName : groups) {
         const auto groupIt = m_groups.constFind(groupName);
         if (groupIt == m_groups.cend())
@@ -111,7 +216,14 @@ QStringList InventoryDocument::nonExcludedHostNames() const
 QString InventoryDocument::excludedPingPattern() const
 {
     QString pattern = QStringLiteral("all");
-    for (const QString &groupName : excludedGroups())
-        pattern += QStringLiteral(":!") + groupName;
+    QStringList hosts = excludedHostSet().values();
+    hosts.sort(Qt::CaseInsensitive);
+
+    // Exclude the concrete host aliases as well as keeping a reduced expected-host
+    // set. This is important: otherwise Ansible would still connect to an excluded
+    // host and the application would merely ignore its result.
+    for (const QString &hostName : hosts)
+        pattern += QStringLiteral(":!") + hostName;
+
     return pattern;
 }

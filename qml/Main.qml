@@ -310,7 +310,7 @@ ApplicationWindow {
                 enabled: !inventory.pingRunning
                 onClicked: inventory.pingAll()
                 ToolTip.visible: hovered
-                ToolTip.text: "ansible all -i <inventory> -m ping"
+                ToolTip.text: "Ping all non-excluded inventory hosts"
             }
             ToolButton {
                 text: "Cancel"
@@ -371,8 +371,8 @@ ApplicationWindow {
         orientation: Qt.Horizontal
 
         Pane {
-            SplitView.preferredWidth: 310
-            SplitView.minimumWidth: 220
+            SplitView.preferredWidth: 360
+            SplitView.minimumWidth: 280
             padding: 0
 
             ColumnLayout {
@@ -405,12 +405,14 @@ ApplicationWindow {
                         required property bool hasChildren
                         required property bool expanded
                         required property string sourceGroup
+                        required property bool excluded
+                        required property bool directlyExcluded
 
                         property var pingInfo: nodeType === "host"
                                                ? (inventory.pingStates[name] || ({}))
                                                : ({})
-                        property bool pingBad: window.pingIsBad(pingInfo)
-                        property bool pingChecking: pingInfo.state === "checking"
+                        property bool pingBad: !excluded && window.pingIsBad(pingInfo)
+                        property bool pingChecking: !excluded && pingInfo.state === "checking"
                         property color statusColor: window.pingColor(pingInfo)
 
                         width: ListView.view.width
@@ -434,18 +436,55 @@ ApplicationWindow {
 
                             Label {
                                 visible: treeDelegate.nodeType === "host"
-                                text: treeDelegate.pingChecking ? "◌" : "●"
-                                color: treeDelegate.pingBad
-                                       ? treeDelegate.statusColor
-                                       : (treeDelegate.pingChecking ? palette.highlight : palette.placeholderText)
+                                text: treeDelegate.excluded
+                                      ? "⊘"
+                                      : (treeDelegate.pingChecking ? "◌" : "●")
+                                color: treeDelegate.excluded
+                                       ? window.warningColor
+                                       : (treeDelegate.pingBad
+                                          ? treeDelegate.statusColor
+                                          : (treeDelegate.pingChecking
+                                             ? palette.highlight
+                                             : palette.placeholderText))
                             }
 
                             Label {
                                 Layout.fillWidth: true
                                 text: treeDelegate.name
-                                color: treeDelegate.pingBad ? treeDelegate.statusColor : palette.text
+                                color: treeDelegate.excluded
+                                       ? window.warningColor
+                                       : (treeDelegate.pingBad ? treeDelegate.statusColor : palette.text)
                                 elide: Text.ElideRight
                                 font.weight: treeDelegate.nodeType === "group" ? Font.DemiBold : Font.Normal
+                            }
+
+                            Label {
+                                visible: treeDelegate.excluded
+                                text: "EXCLUDED"
+                                color: window.warningColor
+                                font.pixelSize: 9
+                                font.weight: Font.DemiBold
+                            }
+
+                            ToolButton {
+                                Layout.preferredWidth: 28
+                                Layout.preferredHeight: 28
+                                visible: !(treeDelegate.nodeType === "group" && treeDelegate.name === "all")
+                                text: treeDelegate.directlyExcluded ? "↶" : "⊘"
+                                enabled: !inventory.pingRunning
+                                         && (!treeDelegate.excluded || treeDelegate.directlyExcluded)
+                                onClicked: {
+                                    if (treeDelegate.nodeType === "host")
+                                        inventory.setHostExcluded(treeDelegate.name, !treeDelegate.directlyExcluded)
+                                    else
+                                        inventory.setGroupExcluded(treeDelegate.name, !treeDelegate.directlyExcluded)
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.text: treeDelegate.excluded && !treeDelegate.directlyExcluded
+                                              ? "Excluded by a parent group"
+                                              : (treeDelegate.directlyExcluded
+                                                 ? "Restore to graph and ping"
+                                                 : "Exclude from graph and ping")
                             }
                         }
 

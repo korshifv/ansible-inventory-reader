@@ -17,7 +17,9 @@ public:
         DepthRole,
         HasChildrenRole,
         ExpandedRole,
-        SourceGroupRole
+        SourceGroupRole,
+        ExcludedRole,
+        DirectlyExcludedRole
     };
     Q_ENUM(Role)
 
@@ -42,6 +44,8 @@ private:
         bool hasChildren {false};
         bool expanded {false};
         QString sourceGroup;
+        bool excluded {false};
+        bool directlyExcluded {false};
         QString expansionKey;
     };
 

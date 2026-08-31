@@ -38,10 +38,22 @@ void InventoryDocument::rebuildGraph()
     m_graphNodes.clear();
     m_graphEdges.clear();
 
+    const QSet<QString> excludedGroups = effectiveExcludedGroups();
+    const QSet<QString> excludedHosts = excludedHostSet();
+
+    auto groupVisible = [&excludedGroups](const QString &groupName) {
+        return groupName == QStringLiteral("all") || !excludedGroups.contains(groupName);
+    };
+    auto hostVisible = [&excludedHosts](const QString &hostName) {
+        return !excludedHosts.contains(hostName);
+    };
+
     QHash<QString, int> groupDepth;
     groupDepth.insert(QStringLiteral("all"), 0);
 
     for (const QString &groupName : sortedGroupNames(false)) {
+        if (!groupVisible(groupName))
+            continue;
         if (m_groups[groupName].parents.isEmpty())
             groupDepth.insert(groupName, 1);
     }
@@ -50,9 +62,14 @@ void InventoryDocument::rebuildGraph()
     for (int pass = 0; pass < maxPasses; ++pass) {
         bool anyChange = false;
         for (const QString &groupName : sortedGroupNames(false)) {
+            if (!groupVisible(groupName))
+                continue;
             int depth = groupDepth.value(groupName, 1);
-            for (const QString &parent : m_groups[groupName].parents)
+            for (const QString &parent : m_groups[groupName].parents) {
+                if (!groupVisible(parent))
+                    continue;
                 depth = std::max(depth, groupDepth.value(parent, 1) + 1);
+            }
             if (!groupDepth.contains(groupName) || groupDepth[groupName] != depth) {
                 groupDepth[groupName] = depth;
                 anyChange = true;
@@ -64,20 +81,29 @@ void InventoryDocument::rebuildGraph()
 
     QHash<QString, int> hostDepth;
     for (const QString &hostName : sortedHostNames()) {
+        if (!hostVisible(hostName))
+            continue;
         const auto hostIt = m_hosts.constFind(hostName);
         const HostRecord &host = hostIt.value();
         int depth = 1;
-        for (const QString &group : host.groups)
+        for (const QString &group : host.groups) {
+            if (!groupVisible(group))
+                continue;
             depth = std::max(depth, groupDepth.value(group, 1) + 1);
+        }
         hostDepth.insert(hostName, depth);
     }
 
     QMap<int, QStringList> layers;
     layers[0].append(QStringLiteral("group:all"));
-    for (const QString &groupName : sortedGroupNames(false))
-        layers[groupDepth.value(groupName, 1)].append(QStringLiteral("group:") + groupName);
-    for (const QString &hostName : sortedHostNames())
-        layers[hostDepth.value(hostName, 1)].append(QStringLiteral("host:") + hostName);
+    for (const QString &groupName : sortedGroupNames(false)) {
+        if (groupVisible(groupName))
+            layers[groupDepth.value(groupName, 1)].append(QStringLiteral("group:") + groupName);
+    }
+    for (const QString &hostName : sortedHostNames()) {
+        if (hostVisible(hostName))
+            layers[hostDepth.value(hostName, 1)].append(QStringLiteral("host:") + hostName);
+    }
 
     constexpr qreal left = 48.0;
     constexpr qreal top = 48.0;
@@ -120,10 +146,15 @@ void InventoryDocument::rebuildGraph()
                 node.insert(QStringLiteral("subtitle"), subtitle);
             } else {
                 const GroupRecord &group = m_groups[name];
+                int visibleHostCount = 0;
+                for (const QString &hostName : group.hosts) {
+                    if (hostVisible(hostName))
+                        ++visibleHostCount;
+                }
                 node.insert(QStringLiteral("subtitle"),
                             QStringLiteral("%1 host%2")
-                                .arg(group.hosts.size())
-                                .arg(group.hosts.size() == 1 ? QString() : QStringLiteral("s")));
+                                .arg(visibleHostCount)
+                                .arg(visibleHostCount == 1 ? QString() : QStringLiteral("s")));
             }
 
             m_graphNodes.append(node);
@@ -148,15 +179,21 @@ void InventoryDocument::rebuildGraph()
     };
 
     for (const QString &groupName : sortedGroupNames(false)) {
+        if (!groupVisible(groupName))
+            continue;
         const auto groupIt = m_groups.constFind(groupName);
         const GroupRecord &group = groupIt.value();
         if (group.parents.isEmpty())
             addEdge(QStringLiteral("group:all"), QStringLiteral("group:") + groupName, QStringLiteral("group"));
-        for (const QString &parent : group.parents)
-            addEdge(QStringLiteral("group:") + parent, QStringLiteral("group:") + groupName, QStringLiteral("group"));
+        for (const QString &parent : group.parents) {
+            if (groupVisible(parent))
+                addEdge(QStringLiteral("group:") + parent, QStringLiteral("group:") + groupName, QStringLiteral("group"));
+        }
     }
 
     for (const QString &hostName : sortedHostNames()) {
+        if (!hostVisible(hostName))
+            continue;
         const auto hostIt = m_hosts.constFind(hostName);
         const HostRecord &host = hostIt.value();
         if (host.groups.isEmpty()) {
@@ -164,8 +201,15 @@ void InventoryDocument::rebuildGraph()
         } else {
             QStringList memberships = host.groups.values();
             memberships.sort(Qt::CaseInsensitive);
-            for (const QString &group : memberships)
+            bool linked = false;
+            for (const QString &group : memberships) {
+                if (!groupVisible(group))
+                    continue;
                 addEdge(QStringLiteral("group:") + group, QStringLiteral("host:") + hostName, QStringLiteral("host"));
+                linked = true;
+            }
+            if (!linked)
+                addEdge(QStringLiteral("group:all"), QStringLiteral("host:") + hostName, QStringLiteral("host"));
         }
     }
 

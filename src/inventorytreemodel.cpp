@@ -15,6 +15,9 @@ InventoryTreeModel::InventoryTreeModel(InventoryDocument *document)
         if (m_problemsFirst && !m_document->pingRunning())
             rebuild();
     });
+    connect(m_document, &InventoryDocument::exclusionsChanged, this, [this]() {
+        rebuild();
+    });
 
     rebuild();
 }
@@ -37,6 +40,8 @@ QVariant InventoryTreeModel::data(const QModelIndex &index, int role) const
     case HasChildrenRole: return row.hasChildren;
     case ExpandedRole: return row.expanded;
     case SourceGroupRole: return row.sourceGroup;
+    case ExcludedRole: return row.excluded;
+    case DirectlyExcludedRole: return row.directlyExcluded;
     default: return {};
     }
 }
@@ -49,7 +54,9 @@ QHash<int, QByteArray> InventoryTreeModel::roleNames() const
         {DepthRole, "depth"},
         {HasChildrenRole, "hasChildren"},
         {ExpandedRole, "expanded"},
-        {SourceGroupRole, "sourceGroup"}
+        {SourceGroupRole, "sourceGroup"},
+        {ExcludedRole, "excluded"},
+        {DirectlyExcludedRole, "directlyExcluded"}
     };
 }
 
@@ -115,6 +122,9 @@ void InventoryTreeModel::rebuild()
 
 int InventoryTreeModel::hostProblemRank(const QString &hostName) const
 {
+    if (m_document->isHostExcluded(hostName))
+        return 3;
+
     const auto it = m_document->m_pingResults.constFind(hostName);
     if (it == m_document->m_pingResults.cend())
         return 2;
@@ -170,10 +180,12 @@ void InventoryTreeModel::appendGroup(const QString &groupName,
         sourceGroup.isEmpty() ? QString() : sourceGroup);
     const bool hasChildren = !childGroups.isEmpty() || !hosts.isEmpty();
     const bool expanded = hasChildren && m_expanded.contains(expansionKey);
+    const bool excluded = m_document->isGroupExcluded(groupName);
+    const bool directlyExcluded = m_document->m_excludedGroups.contains(groupName);
 
     m_rows.push_back({
         QStringLiteral("group"), groupName, depth, hasChildren, expanded,
-        sourceGroup, expansionKey
+        sourceGroup, excluded, directlyExcluded, expansionKey
     });
 
     if (!expanded)
@@ -194,7 +206,10 @@ void InventoryTreeModel::appendGroup(const QString &groupName,
     for (const QString &host : hosts) {
         m_rows.push_back({
             QStringLiteral("host"), host, depth + 1, false, false,
-            groupName, QString()
+            groupName,
+            m_document->isHostExcluded(host),
+            m_document->m_excludedHosts.contains(host),
+            QString()
         });
     }
 

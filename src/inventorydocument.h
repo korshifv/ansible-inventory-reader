@@ -29,6 +29,7 @@ class InventoryDocument final : public QObject
     Q_PROPERTY(qreal graphHeight READ graphHeight NOTIFY graphChanged)
     Q_PROPERTY(QStringList groupNames READ groupNames NOTIFY structureChanged)
     Q_PROPERTY(QStringList excludedGroups READ excludedGroups NOTIFY exclusionsChanged)
+    Q_PROPERTY(QStringList excludedHosts READ excludedHosts NOTIFY exclusionsChanged)
     Q_PROPERTY(QVariantMap pingStates READ pingStates NOTIFY pingStateChanged)
     Q_PROPERTY(bool pingRunning READ pingRunning NOTIFY pingStateChanged)
     Q_PROPERTY(int pingCompleted READ pingCompleted NOTIFY pingStateChanged)
@@ -47,6 +48,7 @@ public:
     qreal graphHeight() const;
     QStringList groupNames() const;
     QStringList excludedGroups() const;
+    QStringList excludedHosts() const;
     QVariantMap pingStates() const;
     bool pingRunning() const;
     int pingCompleted() const;
@@ -78,9 +80,12 @@ public:
     Q_INVOKABLE QString nodeVarsYaml(const QString &type, const QString &name) const;
 
     Q_INVOKABLE bool setGroupExcluded(const QString &groupName, bool excluded = true);
+    Q_INVOKABLE bool setHostExcluded(const QString &hostName, bool excluded = true);
     Q_INVOKABLE bool isGroupExcluded(const QString &groupName) const;
     Q_INVOKABLE bool isHostExcluded(const QString &hostName) const;
     Q_INVOKABLE void clearExcludedGroups();
+    Q_INVOKABLE void clearExcludedHosts();
+    Q_INVOKABLE void clearExclusions();
 
     Q_INVOKABLE bool pingAll();
     Q_INVOKABLE bool pingHost(const QString &hostName);
@@ -180,6 +185,7 @@ private:
     QHash<QString, GroupRecord> m_groups;
     QHash<QString, HostRecord> m_hosts;
     QSet<QString> m_excludedGroups;
+    QSet<QString> m_excludedHosts;
     std::unique_ptr<InventoryTreeModel> m_treeModel;
 
     QString m_filePath;

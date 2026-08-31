@@ -23,13 +23,16 @@ bool InventoryDocument::pingAll()
     m_pingResults.clear();
     emit pingStateChanged();
 
+    // excludedPingPattern() contains concrete !host aliases. This guarantees
+    // that excluded hosts are not contacted by Ansible at all, instead of just
+    // dropping their results in the UI.
     return startPingRun(excludedPingPattern(), hosts);
 }
 
 bool InventoryDocument::pingHost(const QString &hostName)
 {
     if (isHostExcluded(hostName)) {
-        setError(QStringLiteral("Host '%1' is excluded from ping by its group.").arg(hostName));
+        setError(QStringLiteral("Host '%1' is excluded from ping.").arg(hostName));
         return false;
     }
 
